@@ -1,7 +1,11 @@
 {
+  "$schema": "https://opencode.ai/config.json",
   "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
-  "permission": {
-    "websearch": "ask",
-    "webfetch": "deny"
-  }
+  "websearch": {
+    "provider": "exa"
+  },
+  "permissions": [
+    { "action": "websearch", "resource": "*", "effect": "ask" },
+    { "action": "webfetch", "resource": "*", "effect": "deny" }
+  ]
 }

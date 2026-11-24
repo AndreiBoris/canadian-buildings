@@ -13,7 +13,9 @@ sbx run opencode .
 If you change config, you just need to remove and re-build:
 
 ```bash
+./development/sandbox/opencode-strict/apply-rules.sh
 sbx rm opencode-worktrees
+# From the parent directory "worktrees"
 SBX_KIT_BUILDER=sandbox sbx run opencode .
 ```
 
@@ -81,6 +83,7 @@ If you need to change the configurations for everyone (instead of using specific
 
 ```bash
 sbx policy ls                                  # view active rules
+sbx policy inspect <policy-uuid>               # view current policy configuration
 sbx policy allow network openrouter.ai:443     # allow endpoint
 sbx policy rm network <domain>:<port>          # prune rule
 sbx policy log                                 # inspect blocked requests
@@ -108,9 +111,15 @@ Block network capability on an existing sandbox:
 sbx policy deny network --sandbox opencode-worktrees <host>
 ```
 
-
 Remove sandbox:
 
 ```bash
 sbx rm opencode-worktrees
+```
+
+Ensure your sandbox is running opencode v2.x.x
+
+```bash
+sbx exec opencode-worktrees -- opencode --version
+# opencode v2.4.0
 ```
