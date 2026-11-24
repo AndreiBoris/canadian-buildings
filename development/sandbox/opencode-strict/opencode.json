@@ -4,8 +4,17 @@
   "websearch": {
     "provider": "exa"
   },
+  "mcp": {
+    "servers": {
+      "exa": {
+        "type": "remote",
+        "url": "https://mcp.exa.ai/mcp?dynamicHighlights=true"
+      }
+    }
+  },
   "permissions": [
-    { "action": "websearch", "resource": "*", "effect": "ask" },
-    { "action": "webfetch", "resource": "*", "effect": "deny" }
+    { "action": "websearch", "resource": "*", "effect": "deny" },
+    { "action": "webfetch", "resource": "*", "effect": "deny" },
+    { "action": "exa_*", "resource": "*", "effect": "ask" }
   ]
 }
