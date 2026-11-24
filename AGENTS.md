@@ -38,11 +38,9 @@ Tie work to github project tickets. Ideally to an existing ticket that already e
 - Generalized — not tied to `gh stack`, just describes the branching pattern
 
 ## 8. Workflow: Task Status Bookkeeping
-- git project statuses map the lifecycle: `Todo` → `In Progress` → `Done`
-- Use attach Labels to map more fine grained tasks within `In Progress`:
-    - On starting: apply `active` label to the github projects
-    - On code done + checks green: apply `implemented`
-    - Only `verified` after a live run with real data/API key confirms the feature
+- git project statuses map the lifecycle:
+- `Backlog` → `Todo` → `In progress` → `In review` → `Done`
+- Additional `Not planned` (Won't fix) and `Duplicate` statuses are also available 
 
 ## 9. Workflow: Pre-Commit Quality Gate
 - Generalized template: "Run linter → type checker → tests before every commit"
