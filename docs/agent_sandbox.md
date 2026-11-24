@@ -2,24 +2,45 @@
 
 ## Main Usage
 
-Once setup, just run like so from the parent directory containing the `main` repo:
+Once set up, run the sandbox from anywhere in the repo — any worktree or subdirectory:
 
 ```bash
-sbx run opencode .
+make sbx
 ```
+
+`make sbx` runs `sbx run opencode .` from the directory that contains all the worktrees (the parent of `main`), so the sandbox mounts the whole worktrees tree and can create new worktrees itself. It re-attaches to the existing sandbox if there is one.
 
 ### Changing config
 
-If you change config, you just need to remove and re-build:
+Kit changes need a rebuild:
 
 ```bash
-./development/sandbox/opencode-strict/apply-rules.sh
-sbx rm opencode-worktrees
-# From the parent directory "worktrees"
-SBX_KIT_BUILDER=sandbox sbx run opencode .
+make sbx-new
 ```
 
-Note: this assumes your sandbox is named `opencode-worktrees`, which is would be if your directory containing your repo and worktrees is called `worktrees`.
+`make sbx-new` copies the kit files into `~/.config/sbx-kits/opencode`, sets the `kit.shortcuts.opencode` shortcut, removes the sandbox, and rebuilds it with `SBX_KIT_BUILDER=sandbox`.
+
+### Make targets
+
+| Target | What it runs |
+| --- | --- |
+| `make sbx` | `sbx run --name opencode-worktrees opencode .` |
+| `make sbx-new` | `make sbx-apply` → `make sbx-settings` → `make sbx-rm` → `SBX_KIT_BUILDER=sandbox sbx run --name opencode-worktrees opencode .` |
+| `make sbx-apply` | `./development/sandbox/opencode-strict/apply-rules.sh` |
+| `make sbx-settings` | `sbx settings set kit.shortcuts.opencode "$HOME/.config/sbx-kits/opencode"` |
+| `make sbx-rm` | `sbx stop …` + `sbx rm …` (prompts for confirmation) |
+| `make sbx-where` | prints the resolved worktrees root and sandbox name |
+| `make sbx-ls` | `sbx ls` |
+| `make sbx-version` | `sbx exec … -- opencode --version` |
+
+The worktrees root is derived from `git rev-parse --git-common-dir` (two levels up from `main/.git`), so the targets work from any worktree. The sandbox name is always passed explicitly and defaults to `<agent>-<workspace directory>` → `opencode-worktrees`. Override either when needed:
+
+```bash
+make sbx WORKTREES_ROOT=/path/to/worktrees
+make sbx-new SANDBOX_NAME=my-sandbox
+```
+
+If the worktrees root or sandbox name cannot be resolved, the targets stop and ask you to set `WORKTREES_ROOT` or `SANDBOX_NAME`.
 
 ## Summary Notes
 
@@ -43,7 +64,7 @@ Sign in:
 sbx login
 ```
 
-Initialize a strict network policy:
+Initialize a strict network policy (one-time; skip if already initialized):
 
 ```bash
 sbx policy init deny-all
@@ -56,41 +77,45 @@ sbx secret set openrouter         # stores in OS keychain (use spend-capped key)
 sbx secret set openrouter --sandbox <name>   # optional per-sandbox override
 ```
 
-Configure the settings by running:
+Configure the settings:
 
 ```bash
-./development/sandbox/opencode-strict/apply-rules.sh
-sbx settings set kit.shortcuts.opencode "$HOME/.config/sbx-kits/opencode"
+make sbx-apply      # copy kit files into ~/.config/sbx-kits/opencode
+make sbx-settings   # point kit.shortcuts.opencode at that directory
 ```
+
+v3 kits need `sbx` 0.45 or later (`sbx --version`).
 
 ## Run
 
-To run this, setup your directory such you mount the directory that contains all your git worktrees.
+Mount the directory that contains all your git worktrees.
 
 ```bash
-# Git worktree (allowing autonomous creation: mount parent container dir)
-# Run from the parent directory of the main git directory to allow the
-# agent in the sandbox to create additional directories for worktrees.
-# The first time you're building, use this command (can take a few minutes):
-SBX_KIT_BUILDER=sandbox sbx run opencode .
-# After the sandbox has been built, you can run it directly like so:
-sbx run opencode .
+# First build (can take a few minutes):
+make sbx-new
+
+# After the sandbox exists, run/re-attach:
+make sbx
 ```
 
-If you need to change the configurations for everyone (instead of using specific rules for yourself), remove the sandbox and rerun the build command after changing the settings and ensuring the rules are stored in local settings.
+The first build uses `SBX_KIT_BUILDER=sandbox` so the kit builds in a builder sandbox rather than the host Docker engine. This avoids the `OCI exporter is not supported for the docker driver` error.
+
+If you need to change the configurations for everyone (instead of using specific rules for yourself), edit the kit files in `development/sandbox/opencode-strict/`, then run `make sbx-new`.
 
 ## Configure
 
 ```bash
-sbx policy ls                                  # view active rules
-sbx policy inspect <policy-uuid>               # view current policy configuration
+sbx policy ls                                  # list policies
+sbx policy ls --wide                           # list rules with IDs and resources
+sbx policy inspect <policy-or-rule-id>         # inspect a policy or rule
 sbx policy allow network openrouter.ai:443     # allow endpoint
-sbx policy rm network <domain>:<port>          # prune rule
-sbx policy log                                 # inspect blocked requests
+sbx policy rm network --resource openrouter.ai:443   # remove rule by resource
+sbx policy rm network --id <rule-id>           # remove rule by ID
+sbx policy log                                 # inspect allowed/blocked requests
 
 sbx                                            # open TUI dashboard
 sbx stop <name>                                # suspend microVM
-sbx rm <name>                                  # destroy VM state (keeps host files)
+sbx rm <name>                                  # destroy VM state (keeps host files; prompts)
 ```
 
 Add a network capability on an existing sandbox:
@@ -114,12 +139,13 @@ sbx policy deny network --sandbox opencode-worktrees <host>
 Remove sandbox:
 
 ```bash
-sbx rm opencode-worktrees
+make sbx-rm            # or: sbx rm opencode-worktrees
 ```
 
-Ensure your sandbox is running opencode v2.x.x
+Ensure your sandbox is running opencode v2.x.x:
 
 ```bash
-sbx exec opencode-worktrees -- opencode --version
-# opencode v2.4.0
+make sbx-version       # or: sbx exec opencode-worktrees -- opencode --version
 ```
+
+`sbx exec` needs `--` before a command that has flags, so `--version` reaches opencode instead of sbx.
