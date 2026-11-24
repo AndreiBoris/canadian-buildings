@@ -8,11 +8,6 @@ capabilities:
       runtime:
         allow:
           - openrouter.ai:443
-          - github.com:443
-          - api.github.com:443
-          - codeload.github.com:443
-          - raw.githubusercontent.com:443
-          - "*.githubusercontent.com:443"
           - opencode.ai:443
           - mcp.exa.ai:443
   - type: com.docker.sandbox/credential@1
