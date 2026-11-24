@@ -29,6 +29,7 @@ Tie work to github project tickets. Ideally to an existing ticket that already e
 ## 6. Workflow: Starting New Work
 - Git worktree procedure (create worktree, move session, work, commit, push)
 - Generalized from the existing script — no project-specific assumptions
+- Run `make hooks` once per clone — installs the branch-name hook (see `docs/branches.md`)
 
 ## 7. Workflow: Stacked Branches (generalized from Stacked PRs)
 - When to stack: distinct independently-reviewable stages where later work depends on earlier
