@@ -33,13 +33,20 @@ Examples:
 
 ### Enforcement
 
-A local git hook enforces this convention on every commit and push. Install it once per clone:
+The convention is enforced in two places, both driven by `.githooks/lib/branch-name.sh`:
+
+1. **Locally**, on every commit and push.
+2. **On GitHub**, by the `branch-name` check that runs on every pull request.
+
+Install the local hook once per clone:
 
 ```bash
 make hooks
 ```
 
 This sets `core.hooksPath` to the versioned `.githooks/` directory, which lives in the shared git config, so the hook applies to every worktree. Disable it with `make hooks-off`; run the rule's tests with `make hooks-test`.
+
+The CI check lives in `.github/workflows/branch-name.yml`. It sources the same `lib/branch-name.sh` and runs the same test suite, so the local hook and the remote gate cannot drift apart. It is meant to be a required status check on `main`; see the repository rulesets.
 
 Accepted shapes:
 
@@ -54,4 +61,4 @@ Accepted shapes:
 - A ticket is optional, but a description is not — a branch cannot be just a number or a ticket key (`chore/412` and `feat/eng-412` are rejected).
 - `main` is always allowed; a detached HEAD (rebase, merge, CI checkout) is skipped.
 
-The hook is a convenience, not a guarantee: `git commit --no-verify` and `git push --no-verify` bypass it.
+The local hook is a convenience, not a guarantee: `git commit --no-verify` and `git push --no-verify` bypass it. The PR check is the enforcement point that cannot be bypassed.
