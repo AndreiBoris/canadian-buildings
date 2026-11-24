@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Reject pushes of branches that do not follow docs/branches.md.
+#
+# Git feeds the refs being pushed on stdin, so this validates what is actually
+# pushed rather than whatever HEAD happens to be.
+set -euo pipefail
+
+hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.githooks/lib/branch-name.sh
+source "$hook_dir/lib/branch-name.sh"
+
+status=0
+
+# stdin: <local ref> <local sha> <remote ref> <remote sha>
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+  # Branch deletions and tags are not branch-name concerns.
+  [[ "$local_sha" =~ ^0+$ ]] && continue
+  [[ "$local_ref" == refs/heads/* ]] || continue
+
+  branch="${local_ref#refs/heads/}"
+  validate_branch "$branch" || status=1
+done
+
+exit "$status"

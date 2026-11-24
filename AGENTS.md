@@ -21,14 +21,16 @@ Each spec file has YAML front matter: `title`, `status` (draft/active/superseded
 2. **No secrets in output** — API keys, tokens, credentials never rendered, logged, or echoed
 3. **Python/scripts own the numbers** — critical values computed by deterministic code, LLM output is advisory
 4. **Determinism settings** — temperature=0, fixed seed (advisory); never set require_parameters
+5. **The human owns the remote** — pushing and all remote work (`git push`, `git fetch`, `gh`, PRs) is always done by the human. Commit locally and stop; never ask whether to push.
 
 ## 5. Workflow: Issue Tracking with github projects
 
 Tie work to github project tickets. Ideally to an existing ticket that already exists (should generally be specified at the start of a piece of work in almost eery case), or by creating a ticket to track work that is doesn't already have a github project ticket assigned for it.
 
 ## 6. Workflow: Starting New Work
-- Git worktree procedure (create worktree, move session, work, commit, push)
+- Git worktree procedure (create worktree, move session, work, commit)
 - Generalized from the existing script — no project-specific assumptions
+- Run `make hooks` once per clone — installs the branch-name hook (see `docs/branches.md`)
 
 ## 7. Workflow: Stacked Branches (generalized from Stacked PRs)
 - When to stack: distinct independently-reviewable stages where later work depends on earlier

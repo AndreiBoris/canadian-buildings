@@ -1,0 +1,35 @@
+name: Branch Name
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: branch-name-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  branch-name:
+    name: branch-name
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # HEAD_REF is passed through the environment rather than interpolated into
+      # the script, so a hostile branch name cannot inject shell syntax.
+      - name: Validate PR branch name
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          source .githooks/lib/branch-name.sh
+          validate_branch "$HEAD_REF"
+
+      # Runs the same suite as `make hooks-test`, so the rule is exercised on
+      # GNU bash (ubuntu-latest) and cannot drift from the local hook.
+      - name: Run branch-name validator tests
+        run: ./development/githooks/test-branch-names.sh

@@ -30,11 +30,20 @@ endif
 # another name.
 SANDBOX_NAME ?= $(if $(WORKTREES_ROOT),$(KIT_NAME)-$(notdir $(WORKTREES_ROOT)),)
 
+# Versioned git hooks (branch-name validation).
+HOOKS_PATH ?= .githooks
+
 .DEFAULT_GOAL := help
-.PHONY: help check-root sbx sbx-new sbx-apply sbx-settings sbx-rm sbx-where sbx-ls sbx-version
+.PHONY: help hooks hooks-off hooks-test check-root sbx sbx-new sbx-apply sbx-settings sbx-rm sbx-where sbx-ls sbx-version
 
 help:
 	@printf '%s\n' \
+	  'Git hooks:' \
+	  '' \
+	  '  make hooks        Install branch-name hooks (all worktrees)' \
+	  '  make hooks-off    Disable the branch-name hooks' \
+	  '  make hooks-test   Run the branch-name rule tests' \
+	  '' \
 	  'Docker Sandboxes (sbx) targets:' \
 	  '' \
 	  '  make sbx          Run/re-attach to the sandbox' \
@@ -48,6 +57,21 @@ help:
 	  '' \
 	  'worktrees root: $(if $(WORKTREES_ROOT),$(WORKTREES_ROOT),<unresolved>)' \
 	  'sandbox name:   $(if $(SANDBOX_NAME),$(SANDBOX_NAME),<unresolved>)'
+
+# Install the versioned hooks once per clone. core.hooksPath lives in the shared
+# .git/config, so this covers every worktree; the relative path resolves to each
+# worktree's own checked-out copy of .githooks.
+hooks:
+	@chmod +x "$(HOOKS_PATH)"/pre-commit "$(HOOKS_PATH)"/pre-push
+	@git config core.hooksPath "$(HOOKS_PATH)"
+	@echo "core.hooksPath -> $(HOOKS_PATH) (applies to all worktrees)"
+
+hooks-off:
+	@git config --unset core.hooksPath 2>/dev/null || true
+	@echo "core.hooksPath unset; branch-name hooks disabled"
+
+hooks-test:
+	@./development/githooks/test-branch-names.sh
 
 check-root:
 	@command -v "$(SBX)" >/dev/null 2>&1 || { echo "error: '$(SBX)' not found on PATH" >&2; exit 1; }
