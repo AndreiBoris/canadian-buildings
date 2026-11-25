@@ -1,0 +1,63 @@
+name: Work Item
+description: A scoped, verifiable unit of work tied to a build phase.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Set the phase milestone and project fields after creating this issue.**
+        Assign the matching `Phase N — ...` milestone, then set **Plane** and
+        **Effort** on the project board. There is no phase field and no phase
+        tag in the title.
+
+        Title format: `<type>(<scope>): <imperative summary>`.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: 1–2 sentences. What this unlocks and why it belongs in this phase.
+      placeholder: Stand up X so that Y can happen without Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Concrete, independently checkable items.
+      value: |
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of Scope
+      description: 1–2 bullets to prevent side-quests (especially GIS or tooling rabbit holes).
+      value: |
+        - 
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: guardrails
+    attributes:
+      label: DataOps Guardrails
+      description: Check what applies, or select N/A for pure infra/chore tickets.
+      options:
+        - label: "**Privacy / PII:** Zero real PII in Git, fixtures, or post-wall models"
+        - label: "**Offline CI:** Runnable with synthetic fixtures (`USE_FIXTURES=true`) and no external API calls"
+        - label: "**Docs / Contracts:** Updated relevant YAML contracts, `.env.example`, or `docs/architecture.md`"
+        - label: "**N/A:** Pure infra/chore ticket — none of the above apply"
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification (Done When)
+      description: Exact commands or observable outputs that prove the ticket is finished.
+      value: |
+        - [ ] `...`
+    validations:
+      required: true
