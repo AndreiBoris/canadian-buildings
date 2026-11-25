@@ -52,6 +52,11 @@ Tie work to github project tickets. Ideally to an existing ticket that already e
 Ticket format (title, body, project fields, milestones): see `docs/tickets.md`.
 PR format (title, body, stacking): see `docs/pull-requests.md`.
 
+Draft tickets and PRs from those templates; do not invent sections or omit
+required ones. In ticket bodies, use GitHub-flavored Markdown checkboxes:
+`- [ ]` for open and `- [x]` for done. Never use `☐` or other Unicode box
+characters — they do not render as checkboxes on GitHub.
+
 ## 6. Workflow: Starting New Work
 - Git worktree procedure (create worktree, move session, work, commit)
 - Generalized from the existing script — no project-specific assumptions
