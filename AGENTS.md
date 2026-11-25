@@ -27,6 +27,9 @@ Each spec file has YAML front matter: `title`, `status` (draft/active/superseded
 
 Tie work to github project tickets. Ideally to an existing ticket that already exists (should generally be specified at the start of a piece of work in almost eery case), or by creating a ticket to track work that is doesn't already have a github project ticket assigned for it.
 
+Ticket format (title, body, project fields, milestones): see `docs/tickets.md`.
+PR format (title, body, stacking): see `docs/pull-requests.md`.
+
 ## 6. Workflow: Starting New Work
 - Git worktree procedure (create worktree, move session, work, commit)
 - Generalized from the existing script — no project-specific assumptions
