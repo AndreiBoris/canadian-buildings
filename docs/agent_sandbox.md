@@ -42,6 +42,84 @@ make sbx-new SANDBOX_NAME=my-sandbox
 
 If the worktrees root or sandbox name cannot be resolved, the targets stop and ask you to set `WORKTREES_ROOT` or `SANDBOX_NAME`.
 
+## Baked Toolchain
+
+The sandbox ships a fixed dev toolchain, installed at image build time. Runtime
+package installation stays disabled: the network policy only allows
+`openrouter.ai`, `opencode.ai`, and `mcp.exa.ai`, so `pip install`, `uv add`,
+`uv sync`, `uv tool install`, `uvx <tool>`, and `npm install` all fail closed.
+
+Versions are pinned as `ARG`s at the top of
+`development/sandbox/opencode-strict/opencode.dockerfile`.
+
+| Tool | Version | Source | Path |
+| --- | --- | --- | --- |
+| opencode | 2.4.0 | npm `@opencode/cli` | on `PATH` |
+| uv / uvx | 0.13.10 | `ghcr.io/astral-sh/uv` | `/usr/local/bin/uv`, `/usr/local/bin/uvx` |
+| ruff | 0.17.6 | `uv tool` (PyPI) | `/usr/local/bin/ruff` |
+| pyrefly | 1.5.0 | `uv tool` (PyPI) | `/usr/local/bin/pyrefly` |
+| yamllint | 1.38.0 | `uv tool` (PyPI) | `/usr/local/bin/yamllint` |
+| check-jsonschema | 0.39.0 | `uv tool` (PyPI) | `/usr/local/bin/check-jsonschema` |
+| taplo | 0.10.0 | GitHub release, SHA256-verified per arch | `/usr/local/bin/taplo` |
+| jq | 1.8.2 | `ghcr.io/jqlang/jq` | `/usr/local/bin/jq` |
+| yq | 4.54.3 | `mikefarah/yq` | `/usr/local/bin/yq` |
+| actionlint | 1.7.12 | `rhysd/actionlint` | `/usr/local/bin/actionlint` |
+| hadolint | 2.15.1 | `hadolint/hadolint` | `/usr/local/bin/hadolint` |
+| shellcheck | 0.11.0 | `koalaman/shellcheck` | `/usr/local/bin/shellcheck` |
+| betterleaks | 1.9.0 | `ghcr.io/betterleaks/betterleaks` | `/usr/local/bin/betterleaks` |
+
+The four `uv tool` packages live in `/opt/uv-tools` (`UV_TOOL_DIR`), with their
+entry points in `/usr/local/bin` (`UV_TOOL_BIN_DIR`); `uv tool list` reports them.
+A test runner is not baked yet — it lands with the first `pyproject.toml`.
+
+### Adding or bumping a tool
+
+1. Change the version `ARG` at the top of the Dockerfile (or add a new stage).
+2. Add the binary to the build-time smoke test.
+3. Run `make sbx-new` and the acceptance checks below.
+
+Binary stages are `COPY --link`'d after the network layers, so a version bump
+that only touches a static binary rebuilds in about a second.
+
+### Caveats
+
+- **Interpreter is fixed.** `UV_PYTHON_PREFERENCE=only-system` with `UV_PYTHON_DOWNLOADS=never`
+  means the image's Python 3.14 is the only interpreter. `uv venv --python 3.12`
+  fails fast. Bake another interpreter (`uv python install 3.13` in the image)
+  rather than relaxing the runtime policy.
+- **Project dependencies need a build layer.** With no PyPI reachability, the
+  project's own dependencies cannot be installed at runtime. Once `pyproject.toml`
+  and `uv.lock` exist, add a `COPY pyproject.toml uv.lock` + `uv sync --frozen`
+  layer to the Dockerfile before the smoke test.
+- **`/home/agent/.local/bin` precedes `/usr/local/bin` on `PATH`**, so anything the
+  agent installs would shadow a baked binary. This is another reason runtime
+  installs stay disabled.
+
+### Acceptance checks
+
+After `make sbx-new`, inside the sandbox:
+
+```bash
+uv tool list              # ruff, pyrefly, yamllint, check-jsonschema
+jq --version              # jq-1.8.2
+command -v jq             # /usr/local/bin/jq
+ruff --version && taplo --version && pyrefly --version
+yamllint --version && check-jsonschema --version
+actionlint -version && hadolint --version && shellcheck --version
+betterleaks version && yq --version
+```
+
+The image's build-time smoke test already runs every one of these as `agent`, so a
+PATH, permission, or architecture regression fails the build instead of first use.
+
+### Not done yet
+
+- Base image (`docker/sandbox-templates:opencode`) and
+  `# syntax=docker/dockerfile:1` are still floating; digest-pinning them is a
+  follow-up.
+- `hadolint` self-lint of this Dockerfile is not wired into the pre-commit gate,
+  because the tool only exists inside the sandbox.
+
 ## Summary Notes
 
 - **MicroVM Isolation:** Runs OpenCode inside an isolated microVM (own kernel, filesystem, and internal Docker daemon)—no host Docker daemon exposure.
