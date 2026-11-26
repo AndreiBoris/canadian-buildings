@@ -61,6 +61,7 @@ Versions are pinned as `ARG`s at the top of
 | yamllint | 1.38.0 | `uv tool` (PyPI) | `/usr/local/bin/yamllint` |
 | check-jsonschema | 0.39.0 | `uv tool` (PyPI) | `/usr/local/bin/check-jsonschema` |
 | taplo | 0.10.0 | GitHub release, SHA256-verified per arch | `/usr/local/bin/taplo` |
+| yamlfmt | 0.21.0 | `ghcr.io/google/yamlfmt` | `/usr/local/bin/yamlfmt` |
 | jq | 1.8.2 | `ghcr.io/jqlang/jq` | `/usr/local/bin/jq` |
 | yq | 4.54.3 | `mikefarah/yq` | `/usr/local/bin/yq` |
 | actionlint | 1.7.12 | `rhysd/actionlint` | `/usr/local/bin/actionlint` |
@@ -103,7 +104,7 @@ After `make sbx-new`, inside the sandbox:
 uv tool list              # ruff, pyrefly, yamllint, check-jsonschema
 jq --version              # jq-1.8.2
 command -v jq             # /usr/local/bin/jq
-ruff --version && taplo --version && pyrefly --version
+ruff --version && taplo --version && yamlfmt -version && pyrefly --version
 yamllint --version && check-jsonschema --version
 actionlint -version && hadolint --version && shellcheck --version
 betterleaks version && yq --version

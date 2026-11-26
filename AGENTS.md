@@ -17,7 +17,7 @@ these are the only tools available. Full versions and the add-a-tool procedure:
 | --- | --- |
 | Agent | opencode 2.4.0 on OpenRouter, Exa MCP (researcher subagent) |
 | Python | uv / uvx 0.13.10, system interpreter 3.14 (no downloads) |
-| Lint / format | ruff, yamllint, taplo |
+| Lint / format | ruff, yamllint, taplo, yamlfmt |
 | Type check | pyrefly |
 | Schema / config | check-jsonschema, jq, yq |
 | CI / shell | actionlint, hadolint, shellcheck |
@@ -81,7 +81,7 @@ characters — they do not render as checkboxes on GitHub.
   that does not exist fails closed — create it with `make sbx-new`.
 - The `.githooks/pre-commit` hook calls `make verify`; there is no skip-if-missing
   fallback. `git commit --no-verify` remains git's own escape hatch.
-- Baked tools for the first two stages: `ruff`, `yamllint`, `taplo`, `pyrefly`
+- Baked tools for the first two stages: `ruff`, `yamllint`, `taplo`, `yamlfmt`, `pyrefly`
 - Test runner is not baked yet and lands with the first `pyproject.toml`
   (baked inventory: §2; dependency plan: `docs/agent_sandbox.md`)
 

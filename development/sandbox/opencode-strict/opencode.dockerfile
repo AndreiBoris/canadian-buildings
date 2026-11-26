@@ -9,6 +9,7 @@ ARG YQ_VERSION=4.54.3
 ARG TAPLO_VERSION=0.10.0
 ARG TAPLO_SHA256_AMD64=8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156
 ARG TAPLO_SHA256_ARM64=033681d01eec8376c3fd38fa3703c79316f5e14bb013d859943b60a07bccdcc3
+ARG YAMLFMT_VERSION=0.21.0
 ARG YAMLLINT_VERSION=1.38.0
 ARG CHECK_JSONSCHEMA_VERSION=0.39.0
 
@@ -31,6 +32,7 @@ FROM rhysd/actionlint:${ACTIONLINT_VERSION} AS actionlint
 FROM hadolint/hadolint:${HADOLINT_VERSION} AS hadolint
 FROM koalaman/shellcheck:${SHELLCHECK_VERSION} AS shellcheck
 FROM ghcr.io/betterleaks/betterleaks:${BETTERLEAKS_VERSION} AS betterleaks
+FROM ghcr.io/google/yamlfmt:${YAMLFMT_VERSION} AS yamlfmt
 
 # -- Final sandbox image -------------------------------------------------------
 # Pinned by digest; bump deliberately with the command in docs/agent_sandbox.md.
@@ -88,6 +90,7 @@ COPY --link --from=actionlint  /usr/local/bin/actionlint /usr/local/bin/actionli
 COPY --link --from=hadolint    /bin/hadolint             /usr/local/bin/hadolint
 COPY --link --from=shellcheck  /bin/shellcheck           /usr/local/bin/shellcheck
 COPY --link --from=betterleaks /usr/bin/betterleaks      /usr/local/bin/betterleaks
+COPY --link --from=yamlfmt     /bin/yamlfmt              /usr/local/bin/yamlfmt
 
 # Pre-create /etc/opencode as root (0755): traversable by agent,
 # read-only to it, avoids COPY --chmod=644 stripping +x (below)
@@ -103,6 +106,7 @@ RUN set -x \
     && jq --version \
     && yq --version \
     && check-jsonschema --version \
+    && yamlfmt -version \
     && taplo --version \
     && actionlint -version \
     && hadolint --version \

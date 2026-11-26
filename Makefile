@@ -157,6 +157,7 @@ sbx-accept-raw:
 	pyrefly --version; \
 	yamllint --version; \
 	check-jsonschema --version; \
+	yamlfmt -version; \
 	taplo --version; \
 	jq --version; \
 	yq --version; \
