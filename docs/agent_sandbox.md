@@ -18,7 +18,7 @@ make sbx
 make sbx-new
 ```
 
-`make sbx-new` copies the kit files into `~/.config/sbx-kits/opencode`, sets the `kit.shortcuts.opencode` shortcut, removes the sandbox, and rebuilds it with `SBX_KIT_BUILDER=sandbox`. A rebuild keeps the OpenCode state volume.
+`make sbx-new` copies the kit files into `~/.config/sbx-kits/opencode`, sets the `kit.shortcuts.opencode` shortcut, flushes the OpenCode state, removes the sandbox, and rebuilds it with `SBX_KIT_BUILDER=sandbox`. A rebuild keeps the OpenCode state volume; the flush makes the newest sessions durable first.
 
 ### Make targets
 
@@ -28,7 +28,8 @@ make sbx-new
 | `make sbx-new` | `make sbx-apply` → `make sbx-settings` → `make sbx-rm` → `SBX_KIT_BUILDER=sandbox sbx run --name opencode-worktrees opencode .` |
 | `make sbx-apply` | `./development/sandbox/opencode-strict/apply-rules.sh` |
 | `make sbx-settings` | `sbx settings set kit.shortcuts.opencode "$HOME/.config/sbx-kits/opencode"` |
-| `make sbx-rm` | `sbx rm …` (prompts; keeps the volume; clears the kit stamp) |
+| `make sbx-flush` | checkpoints the OpenCode WAL and `sync -f`s the state volume |
+| `make sbx-rm` | `make sbx-flush` → `sbx rm …` (prompts; keeps the volume; clears the kit stamp) |
 | `make sbx-where` | prints the resolved worktrees root and sandbox name |
 | `make sbx-ls` | `sbx ls` |
 | `make sbx-version` | `sbx exec … -- opencode --version` |
@@ -49,12 +50,32 @@ When a kit change forces a rebuild, `sbx rm` asks for confirmation and refuses w
 OpenCode state lives at `/home/agent/.local/share/opencode` (`opencode.db`, WAL/SHM, logs, snapshots). The kit mounts that path as a private block `volume@1` (`1g`, mode `0755`), and an install hook gives it to `agent`.
 
 - The volume survives `sbx rm` and `make sbx-new` when the sandbox name, kit source directory, and volume path stay the same.
-- Requires sbx **0.50.0+**. `make sbx-new` fails fast on older versions; `SBX_MIN_VERSION=...` overrides at your own risk.
+- Requires sbx **0.50.0+**. `make sbx-new` and `make sbx-rm` fail fast on older versions; `SBX_MIN_VERSION=...` overrides at your own risk.
 - Block storage keeps SQLite WAL locking and shared-memory semantics working. Do not replace it with a host bind mount, and never share `opencode.db` with host OpenCode or another sandbox.
 - `make sbx-rm` keeps the volume. To start with fresh storage, use a new `SANDBOX_NAME`; `sbx reset` wipes all sandbox data. `sbx volume` is cloud-only, and there is no supported selective local volume delete.
 - Do not change `size`, `mode`, or `tmpfs` against a retained volume; creation refuses. Use a new sandbox name instead.
 - The first rebuild after adding the volume starts empty; sessions in the old sandbox root filesystem are not migrated.
 - `~/.local/state/opencode` and `~/.cache/opencode` are not on the volume; they remain ephemeral runtime state/cache.
+
+#### Why a volume alone is not enough
+
+OpenCode opens SQLite with `journal_mode=WAL` and `synchronous=NORMAL`, so a
+session commit lands in `opencode.db-wal` without an fsync. `sbx rm` destroys
+the microVM and the guest never flushes its page cache, so everything since the
+last checkpoint is lost even though the volume itself is retained. That is why
+`make sbx-new` and `make sbx-rm` run `make sbx-flush` first:
+
+- `PRAGMA wal_checkpoint(PASSIVE)` copies WAL frames into `opencode.db` without
+  blocking a running OpenCode; an incomplete checkpoint is fine.
+- `sync -f /home/agent/.local/share/opencode` flushes the state volume, and only
+  that volume, to disk.
+
+A background `startup` hook repeats the scoped flush every 30 s as crash
+insurance, so an unexpected kill loses at most that window.
+
+`SKIP_FLUSH=1` skips the flush when a sandbox is wedged; use it only when the
+recent session history does not matter. Running `sbx rm` directly, outside the
+Makefile, also bypasses the flush.
 
 ## Baked Toolchain
 
@@ -266,13 +287,15 @@ sbx policy deny network --sandbox opencode-worktrees <host>
 Remove sandbox:
 
 ```bash
-make sbx-rm                              # or: sbx rm opencode-worktrees
+make sbx-rm                              # flush the WAL, then: sbx rm opencode-worktrees
 make sbx-rm SBX_RM_FLAGS=--force         # unattended; no confirmation prompt
+make sbx-rm SKIP_FLUSH=1                 # skip the WAL flush (may lose recent sessions)
 ```
 
-Removing the sandbox keeps the OpenCode state volume. To start with fresh
-storage, use a new sandbox name (`make sbx-new SANDBOX_NAME=opencode-worktrees-fresh`);
-to wipe everything, run `sbx reset`.
+Removing the sandbox keeps the OpenCode state volume. The Makefile flushes the
+WAL first; a direct `sbx rm` does not. To start with fresh storage, use a new
+sandbox name (`make sbx-new SANDBOX_NAME=opencode-worktrees-fresh`); to wipe
+everything, run `sbx reset`.
 
 Ensure your sandbox is running opencode v2.x.x:
 

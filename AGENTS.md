@@ -60,7 +60,7 @@ items** (status updates, paused-work notes, resume instructions):
 Unicode box or tick characters — they render as literal text, do not tick, and
 cannot be updated without editing the comment body. Avoid writing out the full
 directory path including the user directory when creating these ticket updates.
-Instead, start from the directory containing the the worktrees (called
+Instead, start from the directory containing the worktrees (called
 "worktrees") when indicating where the work is being completed from for a given
 worktree.
 

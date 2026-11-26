@@ -184,7 +184,7 @@ to resume. Scope changes belong in the body (edit it) or in a new ticket.
   the human (`AGENTS.md` §4.5); a comment records intent, not a push.
 - Avoid writing out the full directory path including the user directory when
   creating these ticket updates. Instead, start from the directory containing the
-  the worktrees (called "worktrees") when indicating where the work is being
+  worktrees (called "worktrees") when indicating where the work is being
   completed from for a given worktree.
 
 ## Branch and PR linkage

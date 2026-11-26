@@ -22,6 +22,23 @@ capabilities:
             chown -R agent:agent /home/agent/.local/share/opencode
           user: "0"
           description: Give the agent ownership of the OpenCode state volume
+      startup:
+        - command: |
+            set -eu
+            state=/home/agent/.local/share/opencode
+            if sync -f "$state"; then
+              flush() { sync -f "$state"; }
+            else
+              echo "opencode: sync -f unsupported; using global sync" >&2
+              flush() { sync; }
+            fi
+            while :; do
+              sleep 30
+              flush || echo "opencode: periodic sync failed" >&2
+            done
+          user: agent
+          background: true
+          description: Periodically flush the OpenCode state volume against unclean VM removal
   - type: com.docker.sandbox/network-policy@1
     config:
       runtime:
