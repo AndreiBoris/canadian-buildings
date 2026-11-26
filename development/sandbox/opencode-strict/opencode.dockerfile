@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
 
 # -- Pinned versions (single source of truth) ----------------------------------
 ARG OPENCODE_VERSION=2.4.0
@@ -33,7 +33,8 @@ FROM koalaman/shellcheck:${SHELLCHECK_VERSION} AS shellcheck
 FROM ghcr.io/betterleaks/betterleaks:${BETTERLEAKS_VERSION} AS betterleaks
 
 # -- Final sandbox image -------------------------------------------------------
-FROM docker/sandbox-templates:opencode
+# Pinned by digest; bump deliberately with the command in docs/agent_sandbox.md.
+FROM docker/sandbox-templates:opencode@sha256:7feb9784bc882dbe014888becb65c23e7fb1d1b24169a68d33660fe44476a0b4
 
 USER root
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
@@ -90,7 +91,8 @@ COPY --link --from=betterleaks /usr/bin/betterleaks      /usr/local/bin/betterle
 
 # Pre-create /etc/opencode as root (0755): traversable by agent,
 # read-only to it, avoids COPY --chmod=644 stripping +x (below)
-RUN install -d -m 755 /etc/opencode
+RUN install -d -m 755 /etc/opencode \
+    && touch /etc/opencode/sandbox
 
 # 6. Build-time smoke test as the actual runtime user
 USER agent

@@ -111,14 +111,35 @@ betterleaks version && yq --version
 
 The image's build-time smoke test already runs every one of these as `agent`, so a
 PATH, permission, or architecture regression fails the build instead of first use.
+The same checks are available as `make sbx-accept`; it runs inside the sandbox and
+delegates automatically when invoked from the host.
+
+### Pinning the base image and Dockerfile frontend
+
+The base image and the BuildKit frontend are pinned by digest:
+
+```dockerfile
+# syntax=docker/dockerfile:1@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
+FROM docker/sandbox-templates:opencode@sha256:7feb9784bc882dbe014888becb65c23e7fb1d1b24169a68d33660fe44476a0b4
+```
+
+Re-resolve both on the host when bumping:
+
+```bash
+for ref in docker/dockerfile:1 docker/sandbox-templates:opencode; do
+  digest=$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/ {print $2; exit}')
+  printf "%s@%s\n" "$ref" "$digest"
+done
+```
+
+Use the top-level `Digest:` line (the multi-arch index), not a per-platform
+digest. Update the Dockerfile and this document together, then run `make sbx-new`
+and the acceptance checks.
 
 ### Not done yet
 
-- Base image (`docker/sandbox-templates:opencode`) and
-  `# syntax=docker/dockerfile:1` are still floating; digest-pinning them is a
-  follow-up.
-- `hadolint` self-lint of this Dockerfile is not wired into the pre-commit gate,
-  because the tool only exists inside the sandbox.
+- A test runner is not baked yet; it lands with the first `pyproject.toml`
+  (tracked as a separate ticket).
 
 ## Summary Notes
 
