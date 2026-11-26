@@ -76,6 +76,11 @@ characters — they do not render as checkboxes on GitHub.
 
 ## 9. Workflow: Pre-Commit Quality Gate
 - Run "linter → type checker → tests before every commit"
+- `make verify` runs the gate. Inside the sandbox it runs directly; from the host
+  it delegates into the sandbox, starting a stopped sandbox on demand. A sandbox
+  that does not exist fails closed — create it with `make sbx-new`.
+- The `.githooks/pre-commit` hook calls `make verify`; there is no skip-if-missing
+  fallback. `git commit --no-verify` remains git's own escape hatch.
 - Baked tools for the first two stages: `ruff`, `yamllint`, `taplo`, `pyrefly`
 - Test runner is not baked yet and lands with the first `pyproject.toml`
   (baked inventory: §2; dependency plan: `docs/agent_sandbox.md`)

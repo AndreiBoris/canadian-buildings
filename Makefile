@@ -88,14 +88,15 @@ check-root:
 	@test -n "$(SANDBOX_NAME)" || { echo "error: cannot resolve the sandbox name; set SANDBOX_NAME=..." >&2; exit 1; }
 
 # Quality gate. Inside the sandbox this runs directly; on the host it delegates
-# to the running sandbox so the toolchain lives in one place.
+# into the sandbox so the toolchain lives in one place. A stopped sandbox is
+# started on demand; a sandbox that does not exist fails closed.
 verify:
 	@if [ -f /etc/opencode/sandbox ]; then \
 	  $(MAKE) --no-print-directory verify-raw; \
 	elif command -v "$(SBX)" >/dev/null 2>&1; then \
 	  $(MAKE) --no-print-directory check-root || exit 1; \
 	  if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
-	    echo "error: sandbox $(SANDBOX_NAME) is not running; run 'make sbx' and retry" >&2; \
+	    echo "error: sandbox $(SANDBOX_NAME) does not exist; run 'make sbx-new' and retry" >&2; \
 	    exit 1; \
 	  fi; \
 	  $(SBX) exec "$(SANDBOX_NAME)" -- bash -lc 'cd "$(CURDIR)" && make --no-print-directory verify'; \
@@ -139,7 +140,7 @@ sbx-accept:
 	elif command -v "$(SBX)" >/dev/null 2>&1; then \
 	  $(MAKE) --no-print-directory check-root || exit 1; \
 	  if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
-	    echo "error: sandbox $(SANDBOX_NAME) is not running; run 'make sbx' and retry" >&2; \
+	    echo "error: sandbox $(SANDBOX_NAME) does not exist; run 'make sbx-new' and retry" >&2; \
 	    exit 1; \
 	  fi; \
 	  $(SBX) exec "$(SANDBOX_NAME)" -- bash -lc 'cd "$(CURDIR)" && make --no-print-directory sbx-accept-raw'; \

@@ -114,6 +114,19 @@ PATH, permission, or architecture regression fails the build instead of first us
 The same checks are available as `make sbx-accept`; it runs inside the sandbox and
 delegates automatically when invoked from the host.
 
+### Quality gate
+
+`make verify` runs the pre-commit checks: lint, typecheck, and tests. Inside the
+sandbox it runs directly. On the host it delegates into the sandbox, so the checks
+always use the baked toolchain and never run natively on macOS.
+
+- A **stopped** sandbox is started on demand by `sbx exec`. The commit proceeds
+  once the sandbox is up; expect a short boot delay.
+- A sandbox that **does not exist** fails closed. Create it with `make sbx-new`
+  and retry.
+- The `.githooks/pre-commit` hook calls `make verify`; there is no skip-if-missing
+  fallback. `git commit --no-verify` remains git's own escape hatch.
+
 ### Pinning the base image and Dockerfile frontend
 
 The base image and the BuildKit frontend are pinned by digest:
