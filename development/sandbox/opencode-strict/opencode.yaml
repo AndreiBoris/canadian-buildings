@@ -3,6 +3,25 @@ schemaVersion: "3"
 kind: workload
 capabilities:
   - type: com.docker.sandbox/sbx@1
+  - type: com.docker.sandbox/volume@1
+    config:
+      path: /home/agent/.local/share/opencode
+      size: 1g
+      mode: "0755"
+      tmpfs: false
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: |
+            set -eu
+            # agent is uid/gid 1000 in the base image; names survive UID shifts.
+            install -d -o agent -g agent -m 0755 \
+              /home/agent/.local \
+              /home/agent/.local/share \
+              /home/agent/.local/share/opencode
+            chown -R agent:agent /home/agent/.local/share/opencode
+          user: "0"
+          description: Give the agent ownership of the OpenCode state volume
   - type: com.docker.sandbox/network-policy@1
     config:
       runtime:

@@ -8,27 +8,27 @@ Once set up, run the sandbox from anywhere in the repo — any worktree or subdi
 make sbx
 ```
 
-`make sbx` runs `sbx run opencode .` from the directory that contains all the worktrees (the parent of `main`), so the sandbox mounts the whole worktrees tree and can create new worktrees itself. It re-attaches to the existing sandbox if there is one.
+`make sbx` runs `sbx run opencode .` from the directory that contains all the worktrees (the parent of `main`), so the sandbox mounts the whole worktrees tree and can create new worktrees itself. It hashes the kit sources and rebuilds first when they changed or the sandbox is missing; otherwise it re-attaches.
 
 ### Changing config
 
-Kit changes need a rebuild:
+`make sbx` detects edits under `development/sandbox/opencode-strict/` and rebuilds automatically. To force a rebuild without relying on the hash:
 
 ```bash
 make sbx-new
 ```
 
-`make sbx-new` copies the kit files into `~/.config/sbx-kits/opencode`, sets the `kit.shortcuts.opencode` shortcut, removes the sandbox, and rebuilds it with `SBX_KIT_BUILDER=sandbox`.
+`make sbx-new` copies the kit files into `~/.config/sbx-kits/opencode`, sets the `kit.shortcuts.opencode` shortcut, removes the sandbox, and rebuilds it with `SBX_KIT_BUILDER=sandbox`. A rebuild keeps the OpenCode state volume.
 
 ### Make targets
 
 | Target | What it runs |
 | --- | --- |
-| `make sbx` | `sbx run --name opencode-worktrees opencode .` |
+| `make sbx` | `sbx run --name opencode-worktrees opencode .`; rebuilds first if the kit hash or sandbox state changed |
 | `make sbx-new` | `make sbx-apply` → `make sbx-settings` → `make sbx-rm` → `SBX_KIT_BUILDER=sandbox sbx run --name opencode-worktrees opencode .` |
 | `make sbx-apply` | `./development/sandbox/opencode-strict/apply-rules.sh` |
 | `make sbx-settings` | `sbx settings set kit.shortcuts.opencode "$HOME/.config/sbx-kits/opencode"` |
-| `make sbx-rm` | `sbx stop …` + `sbx rm …` (prompts for confirmation) |
+| `make sbx-rm` | `sbx rm …` (prompts; keeps the volume; clears the kit stamp) |
 | `make sbx-where` | prints the resolved worktrees root and sandbox name |
 | `make sbx-ls` | `sbx ls` |
 | `make sbx-version` | `sbx exec … -- opencode --version` |
@@ -41,6 +41,20 @@ make sbx-new SANDBOX_NAME=my-sandbox
 ```
 
 If the worktrees root or sandbox name cannot be resolved, the targets stop and ask you to set `WORKTREES_ROOT` or `SANDBOX_NAME`.
+
+When a kit change forces a rebuild, `sbx rm` asks for confirmation and refuses while a session is attached. For an unattended rebuild, run `make sbx-new SBX_RM_FLAGS=--force`.
+
+### Session persistence
+
+OpenCode state lives at `/home/agent/.local/share/opencode` (`opencode.db`, WAL/SHM, logs, snapshots). The kit mounts that path as a private block `volume@1` (`1g`, mode `0755`), and an install hook gives it to `agent`.
+
+- The volume survives `sbx rm` and `make sbx-new` when the sandbox name, kit source directory, and volume path stay the same.
+- Requires sbx **0.50.0+**. `make sbx-new` fails fast on older versions; `SBX_MIN_VERSION=...` overrides at your own risk.
+- Block storage keeps SQLite WAL locking and shared-memory semantics working. Do not replace it with a host bind mount, and never share `opencode.db` with host OpenCode or another sandbox.
+- `make sbx-rm` keeps the volume. To start with fresh storage, use a new `SANDBOX_NAME`; `sbx reset` wipes all sandbox data. `sbx volume` is cloud-only, and there is no supported selective local volume delete.
+- Do not change `size`, `mode`, or `tmpfs` against a retained volume; creation refuses. Use a new sandbox name instead.
+- The first rebuild after adding the volume starts empty; sessions in the old sandbox root filesystem are not migrated.
+- `~/.local/state/opencode` and `~/.cache/opencode` are not on the volume; they remain ephemeral runtime state/cache.
 
 ## Baked Toolchain
 
@@ -197,7 +211,7 @@ make sbx-apply      # copy kit files into ~/.config/sbx-kits/opencode
 make sbx-settings   # point kit.shortcuts.opencode at that directory
 ```
 
-v3 kits need `sbx` 0.45 or later (`sbx --version`).
+v3 kits need `sbx` 0.50.0 or later for persistent volumes (`sbx version`).
 
 ## Run
 
@@ -207,13 +221,13 @@ Mount the directory that contains all your git worktrees.
 # First build (can take a few minutes):
 make sbx-new
 
-# After the sandbox exists, run/re-attach:
+# Run/re-attach; rebuilds only when kit sources change:
 make sbx
 ```
 
 The first build uses `SBX_KIT_BUILDER=sandbox` so the kit builds in a builder sandbox rather than the host Docker engine. This avoids the `OCI exporter is not supported for the docker driver` error.
 
-If you need to change the configurations for everyone (instead of using specific rules for yourself), edit the kit files in `development/sandbox/opencode-strict/`, then run `make sbx-new`.
+If you need to change the configurations for everyone (instead of using specific rules for yourself), edit the kit files in `development/sandbox/opencode-strict/`; `make sbx` picks up the change, or run `make sbx-new` to force it.
 
 ## Configure
 
@@ -228,7 +242,7 @@ sbx policy log                                 # inspect allowed/blocked request
 
 sbx                                            # open TUI dashboard
 sbx stop <name>                                # suspend microVM
-sbx rm <name>                                  # destroy VM state (keeps host files; prompts)
+sbx rm <name>                                  # destroy VM state (keeps host files, volume; prompts)
 ```
 
 Add a network capability on an existing sandbox:
@@ -252,8 +266,13 @@ sbx policy deny network --sandbox opencode-worktrees <host>
 Remove sandbox:
 
 ```bash
-make sbx-rm            # or: sbx rm opencode-worktrees
+make sbx-rm                              # or: sbx rm opencode-worktrees
+make sbx-rm SBX_RM_FLAGS=--force         # unattended; no confirmation prompt
 ```
+
+Removing the sandbox keeps the OpenCode state volume. To start with fresh
+storage, use a new sandbox name (`make sbx-new SANDBOX_NAME=opencode-worktrees-fresh`);
+to wipe everything, run `sbx reset`.
 
 Ensure your sandbox is running opencode v2.x.x:
 
