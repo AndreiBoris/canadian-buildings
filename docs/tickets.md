@@ -159,11 +159,7 @@ without bucket-TTL collisions.
 ## Using a ticket as an agent prompt
 
 Because every ticket states Goal, Scope, Out of Scope, and exact verification
-commands, it can be handed straight to a coding agent:
-
-```bash
-gh issue view <num>
-```
+commands, it can be handed straight to a coding agent.
 
 The **Out of Scope** section is the single best guardrail against both solo
 scope creep and agents over-engineering adjacent layers. Keep it specific.
@@ -186,6 +182,10 @@ to resume. Scope changes belong in the body (edit it) or in a new ticket.
   exactly what to run, from where, and what the next agent should do on return.
 - Do not record remote actions as done. Pushes, `gh` calls, and PRs belong to
   the human (`AGENTS.md` §4.5); a comment records intent, not a push.
+- Avoid writing out the full directory path including the user directory when
+  creating these ticket updates. Instead, start from the directory containing the
+  worktrees (called "worktrees") when indicating where the work is being
+  completed from for a given worktree.
 
 ## Branch and PR linkage
 

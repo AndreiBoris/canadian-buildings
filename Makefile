@@ -5,8 +5,8 @@
 # worktrees tree.
 #
 # Quick start:
+#   make sbx       # run/re-attach; rebuilds when kit sources change
 #   make sbx-new   # install kit, set shortcut, remove sandbox, rebuild
-#   make sbx       # run/re-attach to the sandbox
 
 SHELL       := /bin/bash
 SBX         ?= sbx
@@ -30,11 +30,31 @@ endif
 # another name.
 SANDBOX_NAME ?= $(if $(WORKTREES_ROOT),$(KIT_NAME)-$(notdir $(WORKTREES_ROOT)),)
 
+# Persistent volumes need sbx 0.50+; older versions drop the volume on rm.
+SBX_MIN_VERSION ?= 0.50.0
+SBX_RM_FLAGS    ?=
+SKIP_FLUSH      ?= 0
+CACHE_DIR       ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)
+KIT_STAMP       := $(CACHE_DIR)/opencode-sbx/$(SANDBOX_NAME).kit.hash
+STATE_FLUSH_SCRIPT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))development/sandbox/opencode-state-flush.sh)
+
+# Hash only what affects the kit image/config, not unrelated Makefile edits.
+# Paths are relative to the kit dir so switching worktrees does not force a
+# rebuild when the kit content is identical. Expanded inside recipes so
+# `make help` and `make verify` do not shell out.
+define compute_kit_hash
+( cd "$(KIT_DIR)" && \
+  printf 'sandbox=%s\nkit=%s\nshortcut=%s\n' "$(SANDBOX_NAME)" "$(KIT_NAME)" "$(KIT_SHORTCUT_DIR)"; \
+  LC_ALL=C find . -type f ! -name '.DS_Store' | LC_ALL=C sort | \
+  while IFS= read -r f; do printf 'file=%s\n' "$$f"; cat "$$f"; done ) | \
+  git hash-object --stdin
+endef
+
 # Versioned git hooks (branch-name validation).
 HOOKS_PATH ?= .githooks
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks hooks-off hooks-test check-root verify verify-raw lint typecheck test sbx-accept sbx-accept-raw sbx sbx-new sbx-apply sbx-settings sbx-rm sbx-where sbx-ls sbx-version
+.PHONY: help hooks hooks-off hooks-test check-root verify verify-raw lint typecheck test sbx-accept sbx-accept-raw sbx sbx-new sbx-apply sbx-settings sbx-flush sbx-rm sbx-check-version sbx-where sbx-ls sbx-version
 
 help:
 	@printf '%s\n' \
@@ -55,11 +75,12 @@ help:
 	  '' \
 	  'Docker Sandboxes (sbx) targets:' \
 	  '' \
-	  '  make sbx          Run/re-attach to the sandbox' \
+	  '  make sbx          Run/re-attach; rebuild when kit sources change' \
 	  '  make sbx-new      Apply kit, set shortcut, remove sandbox, rebuild' \
 	  '  make sbx-apply    Copy kit files to ~/.config/sbx-kits/$(KIT_NAME)' \
 	  '  make sbx-settings Set kit.shortcuts.$(KIT_NAME)' \
-	  '  make sbx-rm       Stop and remove the sandbox VM (host files kept)' \
+	  '  make sbx-flush    Checkpoint the OpenCode WAL and flush the state volume' \
+	  '  make sbx-rm       Remove the sandbox VM (volume and host files kept)' \
 	  '  make sbx-where    Show resolved worktrees root and sandbox name' \
 	  '  make sbx-ls       List sandboxes' \
 	  '  make sbx-version  Print opencode version inside the sandbox' \
@@ -187,20 +208,77 @@ sbx-apply:
 sbx-settings: sbx-apply
 	@$(SBX) settings set kit.shortcuts.$(KIT_NAME) "$(KIT_SHORTCUT_DIR)"
 
-sbx-rm: check-root
+sbx-check-version: check-root
+	@v="$$($(SBX) version 2>/dev/null | sed -E -n 's/.*sbx version:?[[:space:]]+v?([0-9][0-9.]*).*/\1/p' | head -n1)"; \
+	if [ -z "$$v" ]; then echo "error: cannot determine sbx version" >&2; exit 1; fi; \
+	if ! awk -v have="$$v" -v need="$(SBX_MIN_VERSION)" 'BEGIN { \
+	  split(have,h,"."); split(need,n,"."); \
+	  h[1]+=0; h[2]+=0; h[3]+=0; n[1]+=0; n[2]+=0; n[3]+=0; \
+	  exit !((h[1] > n[1]) || (h[1] == n[1] && (h[2] > n[2] || (h[2] == n[2] && h[3] >= n[3])))) \
+	}'; then \
+	  echo "error: sbx $$v is too old; $(SBX_MIN_VERSION)+ required for persistent volumes" >&2; \
+	  exit 1; \
+	fi
+
+sbx-flush: check-root
 	@if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
-	  echo "sandbox $(SANDBOX_NAME) does not exist; nothing to remove"; \
+	  echo "sandbox $(SANDBOX_NAME) does not exist; nothing to flush"; \
 	  exit 0; \
 	fi; \
-	$(SBX) stop "$(SANDBOX_NAME)" >/dev/null 2>&1 || true; \
-	$(SBX) rm "$(SANDBOX_NAME)"
+	if [ "$(SKIP_FLUSH)" = "1" ]; then \
+	  echo "warning: SKIP_FLUSH=1; not flushing $(SANDBOX_NAME); recent work may be lost" >&2; \
+	  exit 0; \
+	fi; \
+	status=""; \
+	if command -v jq >/dev/null 2>&1; then \
+	  status="$$($(SBX) ls --format json 2>/dev/null | jq -r --arg name "$(SANDBOX_NAME)" '.[] | select(.name == $$name) | .status')" || status=""; \
+	fi; \
+	if [ -n "$$status" ] && [ "$$status" != "running" ]; then \
+	  echo "sandbox $(SANDBOX_NAME) is $$status; skipping flush"; \
+	  exit 0; \
+	fi; \
+	if [ ! -f "$(STATE_FLUSH_SCRIPT)" ]; then \
+	  echo "error: flush script $(STATE_FLUSH_SCRIPT) is missing" >&2; \
+	  exit 1; \
+	fi; \
+	if ! $(SBX) exec -u agent "$(SANDBOX_NAME)" -- bash "$(STATE_FLUSH_SCRIPT)"; then \
+	  echo "error: could not flush $(SANDBOX_NAME); refusing to remove it" >&2; \
+	  echo "       if the sandbox is wedged, re-run with SKIP_FLUSH=1 (may lose recent work)" >&2; \
+	  exit 1; \
+	fi
 
-sbx-new: sbx-settings sbx-rm
+sbx-rm: sbx-check-version sbx-flush
+	@if $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
+	  $(SBX) rm $(SBX_RM_FLAGS) "$(SANDBOX_NAME)"; \
+	else \
+	  echo "sandbox $(SANDBOX_NAME) does not exist; nothing to remove"; \
+	fi
+	@if $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
+	  echo "error: sandbox $(SANDBOX_NAME) still exists; aborting" >&2; \
+	  exit 1; \
+	fi
+	@rm -f "$(KIT_STAMP)"
+
+sbx-new: sbx-check-version sbx-settings sbx-rm
 	@echo "building sandbox $(SANDBOX_NAME) from $(WORKTREES_ROOT)"
+	@[ -d "$(KIT_DIR)" ] || { echo "error: kit dir $(KIT_DIR) is missing" >&2; exit 1; }; \
+	hash="$$( $(compute_kit_hash) )"; \
+	[ -n "$$hash" ] || { echo "error: cannot compute kit hash" >&2; exit 1; }; \
+	mkdir -p "$$(dirname "$(KIT_STAMP)")"; \
+	printf '%s\n' "$$hash" > "$(KIT_STAMP)"
 	@cd "$(WORKTREES_ROOT)" && SBX_KIT_BUILDER=sandbox $(SBX) run --name "$(SANDBOX_NAME)" $(KIT_NAME) .
 
 sbx: check-root
-	@cd "$(WORKTREES_ROOT)" && $(SBX) run --name "$(SANDBOX_NAME)" $(KIT_NAME) .
+	@[ -d "$(KIT_DIR)" ] || { echo "error: kit dir $(KIT_DIR) is missing" >&2; exit 1; }; \
+	hash="$$( $(compute_kit_hash) )"; \
+	[ -n "$$hash" ] || { echo "error: cannot compute kit hash" >&2; exit 1; }; \
+	if $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)" \
+	   && [ -f "$(KIT_STAMP)" ] && [ "$$(cat "$(KIT_STAMP)")" = "$$hash" ]; then \
+	  cd "$(WORKTREES_ROOT)" && $(SBX) run --name "$(SANDBOX_NAME)" $(KIT_NAME) .; \
+	else \
+	  echo "kit sources changed or sandbox missing; rebuilding $(SANDBOX_NAME)"; \
+	  $(MAKE) --no-print-directory sbx-new; \
+	fi
 
 sbx-ls:
 	@$(SBX) ls
