@@ -111,7 +111,11 @@ verify-raw: lint typecheck test
 lint:
 	ruff check .
 	ruff format --check .
-	yamllint .
+	yamllint . .yamllint .yamlfmt
+	yamlfmt -lint . .yamlfmt
+	check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/branch-name.yml
+	check-jsonschema --builtin-schema custom.github-workflows-require-timeout .github/workflows/branch-name.yml
+	check-jsonschema --builtin-schema vendor.github-issue-forms .github/ISSUE_TEMPLATE/work-item.yml
 	taplo fmt --check .
 	actionlint
 	hadolint --failure-threshold warning development/sandbox/opencode-strict/opencode.dockerfile
@@ -157,6 +161,7 @@ sbx-accept-raw:
 	pyrefly --version; \
 	yamllint --version; \
 	check-jsonschema --version; \
+	yamlfmt -version; \
 	taplo --version; \
 	jq --version; \
 	yq --version; \
