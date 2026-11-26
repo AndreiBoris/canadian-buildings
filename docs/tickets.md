@@ -168,6 +168,25 @@ gh issue view <num>
 The **Out of Scope** section is the single best guardrail against both solo
 scope creep and agents over-engineering adjacent layers. Keep it specific.
 
+## Comments
+
+Comments are for **state**, not scope: where the work is, what is left, and how
+to resume. Scope changes belong in the body (edit it) or in a new ticket.
+
+- Append; never rewrite history. If a note goes stale, add a comment that
+  supersedes it instead of editing the old one.
+- Lead with a one-line status, then a checklist of what is done and what is
+  left, so the boundary is visible at a glance.
+- Use GitHub-flavored Markdown checkboxes in comments too: `- [ ]` open,
+  `- [x]` done. Never use `☐`, `☑`, `✓`, or other Unicode box or tick
+  characters — they render as literal text and do not tick.
+- Name the branch and commit (`chore/9-robust-yaml`, `3fb40e8`) so the comment is
+  actionable without a follow-up question.
+- When work pauses for a human step (rebuild, credentials, review), state
+  exactly what to run, from where, and what the next agent should do on return.
+- Do not record remote actions as done. Pushes, `gh` calls, and PRs belong to
+  the human (`AGENTS.md` §4.5); a comment records intent, not a push.
+
 ## Branch and PR linkage
 
 - Branches follow [`branches.md`](branches.md), not the ticket title, e.g.
