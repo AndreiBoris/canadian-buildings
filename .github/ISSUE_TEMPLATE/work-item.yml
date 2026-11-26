@@ -26,8 +26,8 @@ body:
       label: Scope
       description: Concrete, independently checkable items.
       value: |
-        - [ ] 
-        - [ ] 
+        - [ ]
+        - [ ]
     validations:
       required: true
 
@@ -37,7 +37,7 @@ body:
       label: Out of Scope
       description: 1–2 bullets to prevent side-quests (especially GIS or tooling rabbit holes).
       value: |
-        - 
+        -
     validations:
       required: true
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Reject commits on branches that do not follow docs/branches.md.
+# Reject commits on branches that do not follow docs/branches.md and run the
+# quality gate (lint, typecheck, tests).
 set -euo pipefail
 
 hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,7 +8,10 @@ hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$hook_dir/lib/branch-name.sh"
 
 branch="$(git symbolic-ref --quiet --short HEAD || true)"
-# Detached HEAD (rebase, merge, CI checkout): nothing to validate.
-[[ -z "$branch" ]] && exit 0
+# Detached HEAD (rebase, merge, CI checkout): skip branch-name validation.
+if [[ -n "$branch" ]]; then
+  validate_branch "$branch"
+fi
 
-validate_branch "$branch"
+# Quality gate: delegates to the sandbox when run on the host.
+make verify

@@ -114,30 +114,39 @@ git -C "$tmp" config user.email hooks@example.com
 git -C "$tmp" config user.name hooks
 git -C "$tmp" config core.hooksPath "$repo_root/.githooks"
 
+# The pre-commit hook runs the quality gate (`make verify`) after the branch
+# check. Stub the target so the gate succeeds in this throwaway repo and the
+# branch-name rule is what decides each commit. The marker file also proves the
+# hook still invokes the gate; if the target is renamed, this test fails.
+printf 'verify:\n\t@touch gate-ran\n' >"$tmp/Makefile"
+
 echo one >"$tmp/file"
 git -C "$tmp" add file
-if git -C "$tmp" commit -qm init >/dev/null 2>&1; then
-  report ok "commit on main is allowed"
+if git -C "$tmp" commit -qm init >/dev/null 2>&1 && [[ -f "$tmp/gate-ran" ]]; then
+  report ok "commit on main is allowed and runs the quality gate"
 else
-  report FAIL "commit on main was blocked"
+  report FAIL "commit on main was blocked or skipped the quality gate"
 fi
 
 git -C "$tmp" checkout -q -b bad_name
 echo two >>"$tmp/file"
 git -C "$tmp" add file
+rm -f "$tmp/gate-ran"
 if git -C "$tmp" commit -qm bad >/dev/null 2>&1; then
   report FAIL "commit on bad_name was allowed"
+elif [[ -f "$tmp/gate-ran" ]]; then
+  report FAIL "commit on bad_name was blocked by the gate, not the branch name"
 else
-  report ok "commit on bad_name is blocked"
+  report ok "commit on bad_name is blocked before the quality gate"
 fi
 
 git -C "$tmp" checkout -q -b chore/7-good-name
 echo three >>"$tmp/file"
 git -C "$tmp" add file
-if git -C "$tmp" commit -qm good >/dev/null 2>&1; then
-  report ok "commit on chore/7-good-name is allowed"
+if git -C "$tmp" commit -qm good >/dev/null 2>&1 && [[ -f "$tmp/gate-ran" ]]; then
+  report ok "commit on chore/7-good-name is allowed and runs the quality gate"
 else
-  report FAIL "commit on chore/7-good-name was blocked"
+  report FAIL "commit on chore/7-good-name was blocked or skipped the quality gate"
 fi
 
 echo
