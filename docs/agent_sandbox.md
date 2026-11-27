@@ -301,7 +301,8 @@ done
 Use the top-level `Digest:` line (the multi-arch index), not a per-platform
 digest. Update the Dockerfile/Makefile and this document together, then run
 `make sbx-new` and the acceptance checks. `make uv-digest` and `make
-uv-lock-digest` print the currently pinned digests for review.
+uv-lock-digest` query the live registry for the upstream index digest of the
+pinned tags; compare the output with the values in the Dockerfile/Makefile.
 
 ## Summary Notes
 

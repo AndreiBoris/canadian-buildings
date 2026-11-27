@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Compute the content hash that identifies a sandbox image and sandbox name.
+# Compute the content hash that identifies the sandbox content and drives
+# rebuild and stale-image checks.
 #
 # Usage: image-hash.sh [REPO_ROOT]
 #

@@ -68,7 +68,7 @@ VENV_PYTHON      ?= /opt/venv/bin/python
 HOOKS_PATH ?= .githooks
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks hooks-off hooks-test check-root check-docker check-uv-image check-uv-lock-image uv-digest uv-lock-digest verify verify-raw stale-guard lint format format-raw typecheck test lock sbx-accept sbx-accept-raw sbx sbx-new sbx-ensure sbx-shell sbx-exec sbx-exec-check sbx-apply sbx-settings sbx-check-policy sbx-flush sbx-rm sbx-check-version sbx-where sbx-ls sbx-version
+.PHONY: help hooks hooks-off hooks-test check-root check-hash check-docker check-uv-image check-uv-lock-image uv-digest uv-lock-digest verify verify-raw stale-guard lint format format-raw typecheck test lock sbx-accept sbx-accept-raw sbx sbx-new sbx-ensure sbx-shell sbx-exec sbx-exec-check sbx-apply sbx-settings sbx-check-policy sbx-flush sbx-rm sbx-check-version sbx-where sbx-ls sbx-version
 
 help:
 	@printf '%s\n' \
@@ -132,8 +132,10 @@ hooks-test:
 check-root:
 	@command -v "$(SBX)" >/dev/null 2>&1 || { echo "error: '$(SBX)' not found on PATH" >&2; exit 1; }
 	@test -n "$(WORKTREES_ROOT)" || { echo "error: cannot resolve the worktrees root; set WORKTREES_ROOT=..." >&2; exit 1; }
-	@test -n "$(SANDBOX_HASH)" || { echo "error: cannot compute the sandbox hash; uv.lock is missing — run 'make lock' first" >&2; exit 1; }
 	@test -n "$(SANDBOX_NAME)" || { echo "error: cannot resolve the sandbox name; set SANDBOX_NAME=..." >&2; exit 1; }
+
+check-hash:
+	@test -n "$(SANDBOX_HASH)" || { echo "error: cannot compute the sandbox hash; uv.lock is missing — run 'make lock' first" >&2; exit 1; }
 
 check-docker:
 	@command -v docker >/dev/null 2>&1 || { echo "error: 'docker' not found on PATH" >&2; exit 1; }
@@ -160,7 +162,7 @@ verify:
 	@if [ -f /etc/opencode/sandbox ]; then \
 	  $(MAKE) --no-print-directory verify-raw; \
 	elif command -v "$(SBX)" >/dev/null 2>&1; then \
-	  $(MAKE) --no-print-directory check-root || exit 1; \
+	  $(MAKE) --no-print-directory check-root check-hash || exit 1; \
 	  if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
 	    echo "error: sandbox $(SANDBOX_NAME) does not exist or is stale — run 'make sbx'" >&2; \
 	    exit 1; \
@@ -207,7 +209,7 @@ format:
 	@if [ -f /etc/opencode/sandbox ]; then \
 	  $(MAKE) --no-print-directory format-raw; \
 	elif command -v "$(SBX)" >/dev/null 2>&1; then \
-	  $(MAKE) --no-print-directory check-root || exit 1; \
+	  $(MAKE) --no-print-directory check-root check-hash || exit 1; \
 	  if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
 	    echo "error: sandbox $(SANDBOX_NAME) does not exist or is stale — run 'make sbx'" >&2; \
 	    exit 1; \
@@ -246,6 +248,7 @@ test:
 lock: check-docker check-uv-lock-image
 	@test -f pyproject.toml || { echo "error: pyproject.toml is missing" >&2; exit 1; }
 	docker run --rm \
+	  --read-only \
 	  --user "$$(id -u):$$(id -g)" \
 	  --cap-drop ALL \
 	  --security-opt no-new-privileges \
@@ -263,7 +266,7 @@ sbx-accept:
 	@if [ -f /etc/opencode/sandbox ]; then \
 	  $(MAKE) --no-print-directory sbx-accept-raw; \
 	elif command -v "$(SBX)" >/dev/null 2>&1; then \
-	  $(MAKE) --no-print-directory check-root || exit 1; \
+	  $(MAKE) --no-print-directory check-root check-hash || exit 1; \
 	  if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
 	    echo "error: sandbox $(SANDBOX_NAME) does not exist or is stale — run 'make sbx'" >&2; \
 	    exit 1; \
@@ -314,7 +317,7 @@ sbx-apply:
 sbx-settings: sbx-apply
 	@$(SBX) settings set kit.shortcuts.$(KIT_NAME) "$(KIT_SHORTCUT_DIR)"
 
-sbx-check-version:
+sbx-check-version: check-root
 	@command -v "$(SBX)" >/dev/null 2>&1 || { echo "error: '$(SBX)' not found on PATH" >&2; exit 1; }
 	@v="$$($(SBX) version 2>/dev/null | sed -E -n 's/.*sbx version:?[[:space:]]+v?([0-9][0-9.]*).*/\1/p' | head -n1)"; \
 	if [ -z "$$v" ]; then echo "error: cannot determine sbx version" >&2; exit 1; fi; \
@@ -366,7 +369,7 @@ sbx-rm: sbx-check-version sbx-flush
 	fi
 	@rm -f "$(KIT_STAMP)"
 
-sbx-new: sbx-check-version sbx-settings sbx-rm
+sbx-new: sbx-check-version check-hash sbx-settings sbx-rm
 	@echo "building sandbox $(SANDBOX_NAME) from $(KIT_SHORTCUT_DIR)"
 	@hash="$$( "$(IMAGE_HASH)" "$(REPO_ROOT)" )"; \
 	[ -n "$$hash" ] || { echo "error: cannot compute the sandbox hash; uv.lock is missing — run 'make lock' first" >&2; exit 1; }; \
@@ -374,7 +377,7 @@ sbx-new: sbx-check-version sbx-settings sbx-rm
 	printf '%s\n' "$$hash" > "$(KIT_STAMP)"
 	@cd "$(WORKTREES_ROOT)" && SBX_KIT_BUILDER=sandbox $(SBX) $(SBX_BUILD_CMD) --name "$(SANDBOX_NAME)" $(KIT_NAME) .
 
-sbx: check-root
+sbx: check-root check-hash
 	@stamp="$(KIT_STAMP)"; \
 	current="$(SANDBOX_HASH)"; \
 	if [ -f "$$stamp" ] && [ "$$(cat "$$stamp")" = "$$current" ] && $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
@@ -400,7 +403,7 @@ sbx-check-policy: check-root
 # piped input is never consumed by sbx rm's confirmation prompt. Never forces
 # sbx-rm: a rebuild with an attached session, or without a terminal to confirm
 # the prompt, fails closed with a hint.
-sbx-ensure: check-root sbx-check-version
+sbx-ensure: check-root check-hash sbx-check-version
 	@[ -d "$(KIT_DIR)" ] || { echo "error: kit dir $(KIT_DIR) is missing" >&2; exit 1; }; \
 	hash="$$( "$(IMAGE_HASH)" "$(REPO_ROOT)" )"; \
 	[ -n "$$hash" ] || { echo "error: cannot compute the sandbox hash; uv.lock is missing — run 'make lock' first" >&2; exit 1; }; \
