@@ -21,11 +21,14 @@ ARG SHELLCHECK_VERSION=v0.11.0
 # Security & Python
 ARG BETTERLEAKS_VERSION=v1.9.0
 ARG UV_VERSION=0.13.10
+# Multi-arch index digest for ghcr.io/astral-sh/uv:0.13.10.
+# Refresh with: make uv-digest
+ARG UV_DIGEST=a3ea1357342c1a4bf9a0c53a3deb1b55379aefa037338d8113d5771efa01774f
 ARG RUFF_VERSION=0.17.6
 ARG PYREFLY_VERSION=1.5.0
 
 # -- Official binary stages (pulled in parallel, multi-arch automatically) -----
-FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+FROM ghcr.io/astral-sh/uv:${UV_VERSION}@sha256:${UV_DIGEST} AS uv
 FROM ghcr.io/jqlang/jq:${JQ_VERSION} AS jq
 FROM mikefarah/yq:${YQ_VERSION} AS yq
 FROM rhysd/actionlint:${ACTIONLINT_VERSION} AS actionlint
@@ -66,6 +69,18 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv tool install "pyrefly==${PYREFLY_VERSION}" \
     && chmod -R a+rX /opt/uv-tools
 
+# 3b. Locked project environment (root-owned, read-only to the agent)
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    VIRTUAL_ENV=/opt/venv \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH="/opt/venv/bin:${PATH}"
+
+COPY --link pyproject.toml uv.lock /opt/project/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --project /opt/project --locked --no-install-project --no-build \
+    && chmod -R a+rX,go-w /opt/venv
+
 # 4. Taplo (verified per-arch prebuilt release binary)
 ARG TARGETARCH
 ARG TAPLO_VERSION
@@ -97,6 +112,8 @@ COPY --link --from=yamlfmt     /bin/yamlfmt              /usr/local/bin/yamlfmt
 RUN install -d -m 755 /etc/opencode \
     && touch /etc/opencode/sandbox
 
+COPY --chmod=644 sandbox.hash /etc/opencode/sandbox.hash
+
 # 6. Build-time smoke test as the actual runtime user
 USER agent
 RUN set -x \
@@ -115,6 +132,9 @@ RUN set -x \
     && ruff --version \
     && uv --version \
     && pyrefly --version \
+    && test -x /opt/venv/bin/python \
+    && test ! -w /opt/venv \
+    && /opt/venv/bin/python -c "import duckdb; assert duckdb.sql('SELECT 1').fetchone() == (1,)" \
     && tools="$(uv tool list)" \
     && printf '%s\n' "$tools" \
     && test "$(printf '%s\n' "$tools" | grep -c '^ruff')" -eq 1
@@ -122,6 +142,10 @@ RUN set -x \
 # 7. Config last + offline JSON syntax/permission check
 COPY --chmod=644 opencode.json /etc/opencode/opencode.json
 RUN jq empty /etc/opencode/opencode.json
+
+# 8. Runtime guardrails: no syncing and no network writes against /opt/venv.
+ENV UV_OFFLINE=1 \
+    UV_NO_SYNC=1
 
 ENTRYPOINT ["opencode"]
 CMD []

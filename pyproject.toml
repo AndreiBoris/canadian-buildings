@@ -1,0 +1,38 @@
+[project]
+name = "canadian-buildings"
+version = "0.0.0"
+description = "MLOps Canada construction data platform"
+requires-python = "==3.14.*"
+dependencies = ["duckdb>=1.4.0,<2"]
+
+[dependency-groups]
+dev = ["pytest>=8.4.0,<9"]
+
+[tool.uv]
+package = false
+exclude-newer = "7 days"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF", "SIM", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["canadian_buildings"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pyrefly]
+project-includes = ["src", "tests"]
+search-path = ["src"]
+python-version = "3.14"

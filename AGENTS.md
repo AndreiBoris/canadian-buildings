@@ -22,7 +22,7 @@ these are the only tools available. Full versions and the add-a-tool procedure:
 | Schema / config | check-jsonschema, jq, yq |
 | CI / shell | actionlint, hadolint, shellcheck |
 | Secrets | betterleaks |
-| Tests | not baked yet — no test runner in the image |
+| Tests | pytest from the locked `/opt/venv` (built from `uv.lock`) |
 
 ## 3. Documentation Structure
   ├── docs/
@@ -89,7 +89,7 @@ worktree.
 - The `.githooks/pre-commit` hook calls `make verify`; there is no skip-if-missing
   fallback. `git commit --no-verify` remains git's own escape hatch.
 - Baked tools for the first two stages: `ruff`, `yamllint`, `taplo`, `yamlfmt`, `pyrefly`
-- Test runner is not baked yet and lands with the first `pyproject.toml`
+- Test runner is pytest from the locked `/opt/venv`, built from `uv.lock`
   (baked inventory: §2; dependency plan: `docs/agent_sandbox.md`)
 
 ## 10. Workflow: Visual/Functional Evidence Before a PR

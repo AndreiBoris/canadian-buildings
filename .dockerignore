@@ -1,0 +1,16 @@
+.git
+.gitignore
+.env
+.env.*
+**/.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+docs
+tests
+src
+.github
+.githooks
+worktrees
