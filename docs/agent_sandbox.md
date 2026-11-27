@@ -5,49 +5,129 @@
 Once set up, run the sandbox from anywhere in the repo — any worktree or subdirectory:
 
 ```bash
+make lock   # host only: resolve pyproject.toml into uv.lock
 make sbx
 ```
 
-`make sbx` runs `sbx run opencode .` from the directory that contains all the worktrees (the parent of `main`), so the sandbox mounts the whole worktrees tree and can create new worktrees itself. It hashes the kit sources and rebuilds first when they changed or the sandbox is missing; otherwise it re-attaches.
+`make sbx` computes a content hash over `opencode.dockerfile`, `opencode.yaml`,
+`opencode.json`, `pyproject.toml`, `uv.lock`, and `.dockerignore`. It uses that
+hash for both the image tag (`opencode-sandbox:<hash12>`) and the sandbox name
+(`opencode-wt-<hash12>`), then runs from the directory that contains all the
+worktrees. The sandbox mounts the whole worktrees tree, so linked-worktree
+`.git` pointers keep working and the agent can create or switch worktrees.
 
-### Changing config
+Worktrees with identical inputs share one sandbox and one OpenCode session
+history. A change to `pyproject.toml`, `uv.lock`, the Dockerfile, or the kit
+policy produces a new hash and a new sandbox without stopping the old one.
 
-`make sbx` detects edits under `development/sandbox/opencode-strict/` and rebuilds automatically. To force a rebuild without relying on the hash:
+### Dependency workflow
 
-```bash
-make sbx-new
-```
+1. Edit `pyproject.toml`.
+2. Run `make lock` on the host. It resolves in a throwaway, unprivileged,
+   digest-pinned `uv` container; lock resolution never runs on the host.
+3. Review the `uv.lock` diff.
+4. Run `make sbx`. The new hash builds and loads a new image, then starts a new
+   sandbox.
 
-`make sbx-new` copies the kit files into `~/.config/sbx-kits/opencode`, sets the `kit.shortcuts.opencode` shortcut, flushes the OpenCode state, removes the sandbox, and rebuilds it with `SBX_KIT_BUILDER=sandbox`. A rebuild keeps the OpenCode state volume; the flush makes the newest sessions durable first.
+`[tool.uv] exclude-newer = "7 days"` in `pyproject.toml` limits resolution to
+packages published at least seven days ago.
+
+`make lock` is host-only in practice: the sandbox network allow-list blocks
+PyPI and the sandbox does not expose a Docker daemon to the agent. If a host
+does have a Docker daemon but lacks the pinned `uv` image, `make uv-digest`
+prints the expected image digest for review.
+
+### Changing the sandbox image
+
+`make sbx` builds and loads `opencode-sandbox:<hash12>` only when
+`sbx template inspect` cannot find it. `make sbx-new` flushes the OpenCode WAL,
+removes the current hash sandbox, rebuilds the image, and runs it.
+
+The old `make sbx-apply` / `make sbx-settings` targets are kept as a legacy
+manual kit path. The hash-tagged image path does not mutate
+`~/.config/sbx-kits/`.
 
 ### Make targets
 
 | Target | What it runs |
 | --- | --- |
-| `make sbx` | `sbx run --name opencode-worktrees opencode .`; rebuilds first if the kit hash or sandbox state changed |
-| `make sbx-new` | `make sbx-apply` → `make sbx-settings` → `make sbx-rm` → `SBX_KIT_BUILDER=sandbox sbx run --name opencode-worktrees opencode .` |
-| `make sbx-apply` | `./development/sandbox/opencode-strict/apply-rules.sh` |
-| `make sbx-settings` | `sbx settings set kit.shortcuts.opencode "$HOME/.config/sbx-kits/opencode"` |
+| `make lock` | `uv lock --no-build` in a throwaway digest-pinned `uv` container (host only) |
+| `make uv-digest` | prints the `ghcr.io/astral-sh/uv` index digest for review |
+| `make sbx` | ensures `opencode-sandbox:<hash12>` exists, then `sbx run --template … --name opencode-wt-<hash12> opencode "$(WORKTREES_ROOT)"` |
+| `make sbx-new` | `sbx-flush` → `sbx rm` → rebuild/load image → run |
+| `make sbx-image` | builds and loads `opencode-sandbox:<hash12>` from an ephemeral build context |
+| `make sbx-ensure` | builds the image only if the template tag is missing |
+| `make sbx-check-policy` | asserts the sandbox has only the three strict allow-list domains |
+| `make sbx-prune` | reports stale `opencode-sandbox:*` templates and stopped sandboxes |
+| `make sbx-kit` | fallback: run from a hash-keyed kit descriptor so `opencode.yaml` capabilities are applied |
+| `make sbx-apply` | legacy: copy kit and locked project files to `~/.config/sbx-kits/opencode` |
+| `make sbx-settings` | legacy: set the `kit.shortcuts.opencode` shortcut |
 | `make sbx-flush` | checkpoints the OpenCode WAL and `sync -f`s the state volume |
-| `make sbx-rm` | `make sbx-flush` → `sbx rm …` (prompts; keeps the volume; clears the kit stamp) |
-| `make sbx-where` | prints the resolved worktrees root and sandbox name |
+| `make sbx-rm` | `make sbx-flush` → `sbx rm …` (prompts; keeps the volume) |
+| `make sbx-where` | prints the worktrees root, sandbox name, image tag, and hash |
 | `make sbx-ls` | `sbx ls` |
 | `make sbx-version` | `sbx exec … -- opencode --version` |
 
-The worktrees root is derived from `git rev-parse --git-common-dir` (two levels up from `main/.git`), so the targets work from any worktree. The sandbox name is always passed explicitly and defaults to `<agent>-<workspace directory>` → `opencode-worktrees`. Override either when needed:
+The worktrees root is derived from `git rev-parse --git-common-dir` (two levels
+up from `main/.git`), so the targets work from any worktree. The sandbox name is
+always passed explicitly and defaults to `opencode-wt-<hash12>`. Override either
+when needed:
 
 ```bash
 make sbx WORKTREES_ROOT=/path/to/worktrees
 make sbx-new SANDBOX_NAME=my-sandbox
 ```
 
-If the worktrees root or sandbox name cannot be resolved, the targets stop and ask you to set `WORKTREES_ROOT` or `SANDBOX_NAME`.
+If the worktrees root or sandbox name cannot be resolved, the targets stop and
+ask you to set `WORKTREES_ROOT` or `SANDBOX_NAME`.
 
-When a kit change forces a rebuild, `sbx rm` asks for confirmation and refuses while a session is attached. For an unattended rebuild, run `make sbx-new SBX_RM_FLAGS=--force`.
+When a rebuild forces removal, `sbx rm` asks for confirmation and refuses while a
+session is attached. For an unattended rebuild, run
+`make sbx-new SBX_RM_FLAGS=--force`.
+
+### Policy and volume check
+
+Run once after the first `make sbx`:
+
+```bash
+make sbx-check-policy
+sbx policy ls --sandbox "opencode-wt-<hash12>" --wide
+```
+
+The policy must contain exactly `openrouter.ai:443`, `opencode.ai:443`, and
+`mcp.exa.ai:443`, with no wildcard. Also confirm that the
+`/home/agent/.local/share/opencode` volume and the 30-second WAL flush startup
+hook are attached. The kit-descriptor fallback exists for hosts where
+`sbx run --template` does not inherit those kit capabilities:
+
+```bash
+make sbx SBX_RUNTIME=kit
+make sbx-new SBX_RUNTIME=kit
+```
+
+It stages a hash-keyed kit and always passes the absolute
+`$(WORKTREES_ROOT)`.
+
+### Pruning
+
+```bash
+make sbx-prune                 # report templates and sandboxes
+make sbx-prune PRUNE=1         # remove stale opencode-sandbox:* templates
+make sbx-prune PRUNE_SANDBOXES=1  # also prune stopped sandboxes
+```
+
+Templates referenced by a running sandbox are left alone. Stopped
+`opencode-wt-*` sandboxes are reported separately so a stale sandbox is never
+deleted silently.
 
 ### Session persistence
 
 OpenCode state lives at `/home/agent/.local/share/opencode` (`opencode.db`, WAL/SHM, logs, snapshots). The kit mounts that path as a private block `volume@1` (`1g`, mode `0755`), and an install hook gives it to `agent`.
+
+Each hash-named sandbox is expected to own its own volume. Confirm with the host
+spike whether two concurrent `opencode-wt-*` sandboxes isolate or share the
+volume; do not assume sharing is safe.
+
 
 - The volume survives `sbx rm` and `make sbx-new` when the sandbox name, kit source directory, and volume path stay the same.
 - Requires sbx **0.50.0+**. `make sbx-new` and `make sbx-rm` fail fast on older versions; `SBX_MIN_VERSION=...` overrides at your own risk.
@@ -106,7 +186,16 @@ Versions are pinned as `ARG`s at the top of
 
 The four `uv tool` packages live in `/opt/uv-tools` (`UV_TOOL_DIR`), with their
 entry points in `/usr/local/bin` (`UV_TOOL_BIN_DIR`); `uv tool list` reports them.
-A test runner is not baked yet — it lands with the first `pyproject.toml`.
+
+### Locked Python environment
+
+`pyproject.toml` and `uv.lock` are copied into `/opt/project` and installed into
+`/opt/venv` with `uv sync --locked --no-install-project --no-build`. The venv is
+root-owned and read-only to `agent`; `UV_PROJECT_ENVIRONMENT=/opt/venv`,
+`VIRTUAL_ENV=/opt/venv`, and `/opt/venv/bin` on `PATH` make pytest and pyrefly
+resolve the locked packages. At runtime `UV_OFFLINE=1` and `UV_NO_SYNC=1` keep
+the environment immutable, so `uv add`, `uv sync`, and `uv tool install` fail
+closed.
 
 ### Adding or bumping a tool
 
@@ -123,10 +212,10 @@ that only touches a static binary rebuilds in about a second.
   means the image's Python 3.14 is the only interpreter. `uv venv --python 3.12`
   fails fast. Bake another interpreter (`uv python install 3.13` in the image)
   rather than relaxing the runtime policy.
-- **Project dependencies need a build layer.** With no PyPI reachability, the
-  project's own dependencies cannot be installed at runtime. Once `pyproject.toml`
-  and `uv.lock` exist, add a `COPY pyproject.toml uv.lock` + `uv sync --frozen`
-  layer to the Dockerfile before the smoke test.
+- **Project dependencies are baked from the lockfile.** `make lock` must run
+  before `make sbx` after any `pyproject.toml` edit; `uv sync --locked` fails the
+  image build when the lockfile is stale. There is no runtime dependency
+  installation layer.
 - **`/home/agent/.local/bin` precedes `/usr/local/bin` on `PATH`**, so anything the
   agent installs would shadow a baked binary. This is another reason runtime
   installs stay disabled.
@@ -143,6 +232,10 @@ ruff --version && taplo --version && yamlfmt -version && pyrefly --version
 yamllint --version && check-jsonschema --version
 actionlint -version && hadolint --version && shellcheck --version
 betterleaks version && yq --version
+/opt/venv/bin/python --version
+/opt/venv/bin/python -c "import duckdb; assert duckdb.sql('SELECT 1').fetchone() == (1,)"
+/opt/venv/bin/python -m pytest --version
+test ! -w /opt/venv && echo "/opt/venv is read-only"
 ```
 
 The image's build-time smoke test already runs every one of these as `agent`, so a
@@ -152,30 +245,37 @@ delegates automatically when invoked from the host.
 
 ### Quality gate
 
-`make verify` runs the pre-commit checks: lint, typecheck, and tests. Inside the
-sandbox it runs directly. On the host it delegates into the sandbox, so the checks
-always use the baked toolchain and never run natively on macOS.
+`make verify` runs the pre-commit checks: stale-image guard, lint, typecheck, and
+tests. Inside the sandbox it runs directly. On the host it delegates into the
+sandbox, so the checks always use the baked toolchain and never run natively on
+macOS. The guard compares the current content hash with
+`/etc/opencode/sandbox.hash` and fails fast when the working tree no longer
+matches the running image.
+
+`make format` is the mutating counterpart (`ruff format` + `taplo fmt`). It also
+delegates into the sandbox when invoked from the host.
 
 - A **stopped** sandbox is started on demand by `sbx exec`. The commit proceeds
   once the sandbox is up; expect a short boot delay.
-- A sandbox that **does not exist** fails closed. Create it with `make sbx-new`
-  and retry.
+- A sandbox that **does not exist** fails closed. Create it with `make sbx` or
+  `make sbx-new` and retry.
 - The `.githooks/pre-commit` hook calls `make verify`; there is no skip-if-missing
   fallback. `git commit --no-verify` remains git's own escape hatch.
 
-### Pinning the base image and Dockerfile frontend
+### Pinning the base image, Dockerfile frontend, and uv
 
-The base image and the BuildKit frontend are pinned by digest:
+The base image, BuildKit frontend, and uv image are pinned by digest:
 
 ```dockerfile
 # syntax=docker/dockerfile:1@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
 FROM docker/sandbox-templates:opencode@sha256:7feb9784bc882dbe014888becb65c23e7fb1d1b24169a68d33660fe44476a0b4
+FROM ghcr.io/astral-sh/uv:0.13.10@sha256:a3ea1357342c1a4bf9a0c53a3deb1b55379aefa037338d8113d5771efa01774f
 ```
 
-Re-resolve both on the host when bumping:
+Re-resolve all three on the host when bumping:
 
 ```bash
-for ref in docker/dockerfile:1 docker/sandbox-templates:opencode; do
+for ref in docker/dockerfile:1 docker/sandbox-templates:opencode ghcr.io/astral-sh/uv:0.13.10; do
   digest=$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/ {print $2; exit}')
   printf "%s@%s\n" "$ref" "$digest"
 done
@@ -183,12 +283,8 @@ done
 
 Use the top-level `Digest:` line (the multi-arch index), not a per-platform
 digest. Update the Dockerfile and this document together, then run `make sbx-new`
-and the acceptance checks.
-
-### Not done yet
-
-- A test runner is not baked yet; it lands with the first `pyproject.toml`
-  (tracked as a separate ticket).
+and the acceptance checks. `make uv-digest` prints the currently pinned uv index
+digest for review.
 
 ## Summary Notes
 
@@ -228,8 +324,10 @@ sbx secret set openrouter --sandbox <name>   # optional per-sandbox override
 Configure the settings:
 
 ```bash
-make sbx-apply      # copy kit files into ~/.config/sbx-kits/opencode
-make sbx-settings   # point kit.shortcuts.opencode at that directory
+# The hash-tagged path does not need a persistent kit shortcut.
+# Legacy manual kit path only:
+make sbx-apply
+make sbx-settings
 ```
 
 v3 kits need `sbx` 0.50.0 or later for persistent volumes (`sbx version`).
@@ -240,15 +338,21 @@ Mount the directory that contains all your git worktrees.
 
 ```bash
 # First build (can take a few minutes):
+make lock
 make sbx-new
 
-# Run/re-attach; rebuilds only when kit sources change:
+# Run/re-attach; rebuilds only when the content hash changes:
 make sbx
 ```
 
-The first build uses `SBX_KIT_BUILDER=sandbox` so the kit builds in a builder sandbox rather than the host Docker engine. This avoids the `OCI exporter is not supported for the docker driver` error.
+The first build resolves `uv.lock` on the host, then `build-sandbox-image.sh`
+builds `opencode-sandbox:<hash12>` with BuildKit and loads it via
+`sbx template load`. If the host BuildKit driver rejects the OCI exporter, the
+script falls back to `--load` plus `docker image save`.
 
-If you need to change the configurations for everyone (instead of using specific rules for yourself), edit the kit files in `development/sandbox/opencode-strict/`; `make sbx` picks up the change, or run `make sbx-new` to force it.
+If you need to change the configuration for everyone, edit the kit files in
+`development/sandbox/opencode-strict/`; the content hash changes and `make sbx`
+builds a new image and sandbox.
 
 ## Configure
 
@@ -269,38 +373,38 @@ sbx rm <name>                                  # destroy VM state (keeps host fi
 Add a network capability on an existing sandbox:
 
 ```bash
-sbx policy allow network --sandbox opencode-worktrees <host>:443
+sbx policy allow network --sandbox "opencode-wt-<hash12>" <host>:443
 ```
 
 Remove a network capability on an existing sandbox:
 
 ```bash
-sbx policy rm network --sandbox opencode-worktrees --resource <host>:443
+sbx policy rm network --sandbox "opencode-wt-<hash12>" --resource <host>:443
 ```
 
 Block network capability on an existing sandbox:
 
 ```bash
-sbx policy deny network --sandbox opencode-worktrees <host>
+sbx policy deny network --sandbox "opencode-wt-<hash12>" <host>
 ```
 
 Remove sandbox:
 
 ```bash
-make sbx-rm                              # flush the WAL, then: sbx rm opencode-worktrees
+make sbx-rm                              # flush the WAL, then: sbx rm opencode-wt-<hash12>
 make sbx-rm SBX_RM_FLAGS=--force         # unattended; no confirmation prompt
 make sbx-rm SKIP_FLUSH=1                 # skip the WAL flush (may lose recent sessions)
 ```
 
 Removing the sandbox keeps the OpenCode state volume. The Makefile flushes the
 WAL first; a direct `sbx rm` does not. To start with fresh storage, use a new
-sandbox name (`make sbx-new SANDBOX_NAME=opencode-worktrees-fresh`); to wipe
+sandbox name (`make sbx-new SANDBOX_NAME=opencode-wt-fresh`); to wipe
 everything, run `sbx reset`.
 
 Ensure your sandbox is running opencode v2.x.x:
 
 ```bash
-make sbx-version       # or: sbx exec opencode-worktrees -- opencode --version
+make sbx-version       # or: sbx exec "opencode-wt-<hash12>" -- opencode --version
 ```
 
 `sbx exec` needs `--` before a command that has flags, so `--version` reaches opencode instead of sbx.
