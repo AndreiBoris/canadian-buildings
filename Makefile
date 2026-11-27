@@ -184,7 +184,7 @@ lint:
 	check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/branch-name.yml
 	check-jsonschema --builtin-schema custom.github-workflows-require-timeout .github/workflows/branch-name.yml
 	check-jsonschema --builtin-schema vendor.github-issue-forms .github/ISSUE_TEMPLATE/work-item.yml
-	taplo fmt --check .
+	taplo fmt --check
 	actionlint
 	hadolint --failure-threshold warning development/sandbox/opencode-strict/opencode.dockerfile
 	shellcheck $$(git ls-files '*.sh') .githooks/pre-commit .githooks/pre-push .githooks/lib/branch-name.sh
@@ -209,7 +209,7 @@ format:
 
 format-raw:
 	ruff format .
-	taplo fmt .
+	taplo fmt
 
 typecheck:
 	@if [ -f pyproject.toml ]; then \
