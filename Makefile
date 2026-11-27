@@ -6,8 +6,8 @@
 #
 # Quick start:
 #   make lock      # host-only: resolve pyproject.toml into uv.lock in a container
-#   make sbx       # build/load the hash-tagged image, then run/re-attach
-#   make sbx-new   # flush the WAL, remove the sandbox, rebuild the image, run
+#   make sbx       # rebuild on hash change, then run/re-attach
+#   make sbx-new   # flush the WAL, remove the sandbox, apply the kit, rebuild
 
 SHELL       := /bin/bash
 SBX         ?= sbx
@@ -15,10 +15,8 @@ KIT_NAME    ?= opencode
 REPO_ROOT   := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 KIT_DIR     := $(REPO_ROOT)/development/sandbox/opencode-strict
 APPLY_RULES := $(KIT_DIR)/apply-rules.sh
-BUILD_IMAGE := $(REPO_ROOT)/development/sandbox/build-sandbox-image.sh
 IMAGE_HASH  := $(REPO_ROOT)/development/sandbox/image-hash.sh
 CHECK_POLICY := $(REPO_ROOT)/development/sandbox/check-sbx-policy.sh
-PRUNE_SCRIPT := $(REPO_ROOT)/development/sandbox/prune-sbx.sh
 KIT_SHORTCUT_DIR ?= $(HOME)/.config/sbx-kits/$(KIT_NAME)
 
 # Resolve the directory that contains all worktrees from git's common dir
@@ -31,14 +29,15 @@ else
 WORKTREES_ROOT ?= $(abspath $(GIT_COMMON_DIR)/../..)
 endif
 
-# Content-addressed image and sandbox names. The hash covers the Dockerfile,
-# kit policy, pyproject.toml, uv.lock, and .dockerignore.
+# One kit and one sandbox, matching the original worktrees flow. The sandbox
+# name is overridable; the stamp lets `make sbx` rebuild only when the six
+# image inputs change.
+SANDBOX_NAME ?= $(if $(WORKTREES_ROOT),$(KIT_NAME)-$(notdir $(WORKTREES_ROOT)),)
+CACHE_DIR    ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)
+KIT_STAMP    := $(CACHE_DIR)/opencode-sbx/$(SANDBOX_NAME).kit.hash
 SANDBOX_HASH := $(shell "$(IMAGE_HASH)" "$(REPO_ROOT)" 2>/dev/null)
-HASH12       := $(shell printf '%s' "$(SANDBOX_HASH)" | cut -c1-12)
-SANDBOX_NAME := opencode-wt-$(HASH12)
-IMAGE_TAG    := opencode-sandbox:$(HASH12)
 
-# The uv image is pinned once in the Dockerfile; reuse it for make lock.
+# The uv image is pinned once in the Dockerfile; reuse it for digest checks.
 UV_VERSION ?= $(shell sed -n 's/^ARG UV_VERSION=//p' "$(KIT_DIR)/opencode.dockerfile")
 UV_DIGEST  ?= $(shell sed -n 's/^ARG UV_DIGEST=//p' "$(KIT_DIR)/opencode.dockerfile")
 UV_IMAGE   := ghcr.io/astral-sh/uv:$(UV_VERSION)@sha256:$(UV_DIGEST)
@@ -53,10 +52,6 @@ UV_LOCK_IMAGE  := ghcr.io/astral-sh/uv:$(UV_LOCK_TAG)@sha256:$(UV_LOCK_DIGEST)
 SBX_MIN_VERSION ?= 0.50.0
 SBX_RM_FLAGS    ?=
 SKIP_FLUSH      ?= 0
-PRUNE           ?= 0
-PRUNE_SANDBOXES ?= 0
-SBX_RUNTIME     ?= template
-CACHE_DIR       ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)
 STATE_FLUSH_SCRIPT := $(REPO_ROOT)/development/sandbox/opencode-state-flush.sh
 VENV_PYTHON      ?= /opt/venv/bin/python
 
@@ -64,7 +59,7 @@ VENV_PYTHON      ?= /opt/venv/bin/python
 HOOKS_PATH ?= .githooks
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks hooks-off hooks-test check-root check-docker check-uv-image check-uv-lock-image uv-digest uv-lock-digest verify verify-raw stale-guard lint format format-raw typecheck test lock sbx-accept sbx-accept-raw sbx sbx-new sbx-image sbx-ensure sbx-kit sbx-apply sbx-settings sbx-check-policy sbx-prune sbx-flush sbx-rm sbx-check-version sbx-where sbx-ls sbx-version
+.PHONY: help hooks hooks-off hooks-test check-root check-docker check-uv-image check-uv-lock-image uv-digest uv-lock-digest verify verify-raw stale-guard lint format format-raw typecheck test lock sbx-accept sbx-accept-raw sbx sbx-new sbx-apply sbx-settings sbx-check-policy sbx-flush sbx-rm sbx-check-version sbx-where sbx-ls sbx-version
 
 help:
 	@printf '%s\n' \
@@ -92,15 +87,11 @@ help:
 	  '' \
 	  'Docker Sandboxes (sbx) targets:' \
 	  '' \
-	  '  make sbx          Build/load the hash image; run/re-attach the sandbox' \
-	  '  make sbx-new      Flush the WAL, remove the sandbox, rebuild and run' \
-	  '  make sbx-ensure   Build the hash-tagged image only if it is missing' \
-	  '  make sbx-image    Build and load opencode-sandbox:<hash12>' \
+	  '  make sbx          Rebuild on hash change; run/re-attach the sandbox' \
+	  '  make sbx-new      Flush the WAL, remove, apply the kit, rebuild and run' \
+	  '  make sbx-apply    Copy kit and project files to ~/.config/sbx-kits/$(KIT_NAME)' \
+	  '  make sbx-settings Set the kit.shortcuts.$(KIT_NAME) shortcut' \
 	  '  make sbx-check-policy  Assert the strict three-domain allow-list' \
-	  '  make sbx-prune    Report stale hash images and stopped sandboxes' \
-	  '  make sbx-kit      Fallback: run directly from the hash-keyed kit descriptor' \
-	  '  make sbx-apply    Legacy: copy kit files to ~/.config/sbx-kits/$(KIT_NAME)' \
-	  '  make sbx-settings Legacy: set the kit shortcut' \
 	  '  make sbx-flush    Checkpoint the OpenCode WAL and flush the state volume' \
 	  '  make sbx-rm       Remove the sandbox VM (volume and host files kept)' \
 	  '  make sbx-where    Show resolved paths and the content hash' \
@@ -109,8 +100,8 @@ help:
 	  '' \
 	  'worktrees root: $(if $(WORKTREES_ROOT),$(WORKTREES_ROOT),<unresolved>)' \
 	  'sandbox name:   $(if $(SANDBOX_NAME),$(SANDBOX_NAME),<unresolved>)' \
-	  'image tag:      $(if $(HASH12),$(IMAGE_TAG),<unresolved — run make lock>)' \
-	  'sbx runtime:    $(SBX_RUNTIME) (set SBX_RUNTIME=kit to use the kit descriptor)'
+	  'sandbox hash:   $(if $(SANDBOX_HASH),$(SANDBOX_HASH),<unresolved — run make lock>)' \
+	  'kit stamp:      $(KIT_STAMP)'
 
 # Install the versioned hooks once per clone. core.hooksPath lives in the shared
 # .git/config, so this covers every worktree; the relative path resolves to each
@@ -160,7 +151,7 @@ verify:
 	elif command -v "$(SBX)" >/dev/null 2>&1; then \
 	  $(MAKE) --no-print-directory check-root || exit 1; \
 	  if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
-	    echo "error: no sandbox for the current hash ($(SANDBOX_NAME)); the image is stale or missing — run 'make sbx'" >&2; \
+	    echo "error: sandbox $(SANDBOX_NAME) does not exist or is stale — run 'make sbx'" >&2; \
 	    exit 1; \
 	  fi; \
 	  $(SBX) exec "$(SANDBOX_NAME)" -- bash -lc 'cd "$(CURDIR)" && make --no-print-directory verify'; \
@@ -181,7 +172,7 @@ stale-guard:
 	fi; \
 	if [ "$$actual" != "$$expected" ]; then \
 	  echo "error: sandbox image is stale (expected $$expected, image $$actual)" >&2; \
-	  echo "       run 'make sbx' on the host to build and attach the hash-matched sandbox" >&2; \
+	  echo "       run 'make sbx' on the host to rebuild the sandbox" >&2; \
 	  exit 1; \
 	fi
 
@@ -193,7 +184,7 @@ lint:
 	check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/branch-name.yml
 	check-jsonschema --builtin-schema custom.github-workflows-require-timeout .github/workflows/branch-name.yml
 	check-jsonschema --builtin-schema vendor.github-issue-forms .github/ISSUE_TEMPLATE/work-item.yml
-	taplo fmt --check pyproject.toml
+	taplo fmt --check .
 	actionlint
 	hadolint --failure-threshold warning development/sandbox/opencode-strict/opencode.dockerfile
 	shellcheck $$(git ls-files '*.sh') .githooks/pre-commit .githooks/pre-push .githooks/lib/branch-name.sh
@@ -207,7 +198,7 @@ format:
 	elif command -v "$(SBX)" >/dev/null 2>&1; then \
 	  $(MAKE) --no-print-directory check-root || exit 1; \
 	  if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
-	    echo "error: no sandbox for the current hash ($(SANDBOX_NAME)); the image is stale or missing — run 'make sbx'" >&2; \
+	    echo "error: sandbox $(SANDBOX_NAME) does not exist or is stale — run 'make sbx'" >&2; \
 	    exit 1; \
 	  fi; \
 	  $(SBX) exec "$(SANDBOX_NAME)" -- bash -lc 'cd "$(CURDIR)" && make --no-print-directory format-raw'; \
@@ -218,7 +209,7 @@ format:
 
 format-raw:
 	ruff format .
-	taplo fmt pyproject.toml
+	taplo fmt .
 
 typecheck:
 	@if [ -f pyproject.toml ]; then \
@@ -263,7 +254,7 @@ sbx-accept:
 	elif command -v "$(SBX)" >/dev/null 2>&1; then \
 	  $(MAKE) --no-print-directory check-root || exit 1; \
 	  if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
-	    echo "error: no sandbox for the current hash ($(SANDBOX_NAME)); the image is stale or missing — run 'make sbx'" >&2; \
+	    echo "error: sandbox $(SANDBOX_NAME) does not exist or is stale — run 'make sbx'" >&2; \
 	    exit 1; \
 	  fi; \
 	  $(SBX) exec "$(SANDBOX_NAME)" -- bash -lc 'cd "$(CURDIR)" && make --no-print-directory sbx-accept-raw'; \
@@ -302,11 +293,10 @@ sbx-accept-raw:
 sbx-where:
 	@echo "worktrees root: $(if $(WORKTREES_ROOT),$(WORKTREES_ROOT),<unresolved>)"
 	@echo "sandbox name:   $(if $(SANDBOX_NAME),$(SANDBOX_NAME),<unresolved>)"
-	@echo "image tag:      $(if $(HASH12),$(IMAGE_TAG),<unresolved — run make lock>)"
 	@echo "sandbox hash:   $(if $(SANDBOX_HASH),$(SANDBOX_HASH),<unresolved — run make lock>)"
+	@echo "kit stamp:      $(KIT_STAMP)"
 	@echo "kit dir:        $(KIT_DIR)"
 
-# Legacy kit staging. The hash-tagged image path above does not use this.
 sbx-apply:
 	@KIT_TARGET_DIR="$(KIT_SHORTCUT_DIR)" "$(APPLY_RULES)"
 
@@ -363,44 +353,26 @@ sbx-rm: sbx-check-version sbx-flush
 	  echo "error: sandbox $(SANDBOX_NAME) still exists; aborting" >&2; \
 	  exit 1; \
 	fi
+	@rm -f "$(KIT_STAMP)"
 
-sbx-image: check-root check-uv-image
-	@test -f uv.lock || { echo "error: uv.lock is missing — run 'make lock' first" >&2; exit 1; }
-	@"$(BUILD_IMAGE)" "$(REPO_ROOT)" "$(SANDBOX_HASH)" "$(HASH12)"
-
-sbx-ensure: check-root
-	@if ! $(SBX) template inspect "$(IMAGE_TAG)" >/dev/null 2>&1; then \
-	  echo "sandbox template $(IMAGE_TAG) is missing; building"; \
-	  $(MAKE) --no-print-directory sbx-image; \
-	fi
-
-sbx-new: sbx-check-version sbx-rm
-	@if [ "$(SBX_RUNTIME)" = "kit" ]; then \
-	  $(MAKE) --no-print-directory sbx-kit; \
-	else \
-	  $(MAKE) --no-print-directory sbx-image; \
-	  echo "starting sandbox $(SANDBOX_NAME) from $(IMAGE_TAG)"; \
-	  cd "$(WORKTREES_ROOT)" && $(SBX) run --pull never --template "$(IMAGE_TAG)" --name "$(SANDBOX_NAME)" opencode "$(WORKTREES_ROOT)"; \
-	fi
+sbx-new: sbx-check-version sbx-settings sbx-rm
+	@echo "building sandbox $(SANDBOX_NAME) from $(KIT_SHORTCUT_DIR)"
+	@hash="$$( "$(IMAGE_HASH)" "$(REPO_ROOT)" )"; \
+	[ -n "$$hash" ] || { echo "error: cannot compute the sandbox hash; uv.lock is missing — run 'make lock' first" >&2; exit 1; }; \
+	mkdir -p "$$(dirname "$(KIT_STAMP)")"; \
+	printf '%s\n' "$$hash" > "$(KIT_STAMP)"
+	@cd "$(WORKTREES_ROOT)" && SBX_KIT_BUILDER=sandbox $(SBX) run --name "$(SANDBOX_NAME)" $(KIT_NAME) .
 
 sbx: check-root
-	@if [ "$(SBX_RUNTIME)" = "kit" ]; then \
-	  $(MAKE) --no-print-directory sbx-kit; \
+	@stamp="$(KIT_STAMP)"; \
+	current="$(SANDBOX_HASH)"; \
+	if [ -f "$$stamp" ] && [ "$$(cat "$$stamp")" = "$$current" ] && $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
+	  echo "sandbox $(SANDBOX_NAME) is current; re-attaching"; \
+	  cd "$(WORKTREES_ROOT)" && $(SBX) run --name "$(SANDBOX_NAME)" $(KIT_NAME) .; \
 	else \
-	  $(MAKE) --no-print-directory sbx-ensure; \
-	  cd "$(WORKTREES_ROOT)" && $(SBX) run --pull never --template "$(IMAGE_TAG)" --name "$(SANDBOX_NAME)" opencode "$(WORKTREES_ROOT)"; \
+	  echo "sandbox $(SANDBOX_NAME) is missing or stale; rebuilding"; \
+	  $(MAKE) --no-print-directory sbx-new; \
 	fi
-
-# Fallback path if a -t template does not carry the kit's runtime capabilities.
-# It stages a hash-keyed kit and passes the absolute worktrees root, never ".".
-sbx-kit: check-root
-	@stage="$(CACHE_DIR)/opencode-sbx/kits/$(HASH12)"; \
-	mkdir -p "$$stage"; \
-	cp "$(KIT_DIR)/opencode.yaml" "$(KIT_DIR)/opencode.dockerfile" "$(KIT_DIR)/opencode.json" \
-	  "$(REPO_ROOT)/pyproject.toml" "$(REPO_ROOT)/uv.lock" "$(REPO_ROOT)/.dockerignore" "$$stage/"; \
-	printf '%s\n' "$(SANDBOX_HASH)" > "$$stage/sandbox.hash"; \
-	cd "$(WORKTREES_ROOT)" && SBX_KIT_BUILDER=sandbox \
-	  $(SBX) run --name "$(SANDBOX_NAME)" "$$stage" "$(WORKTREES_ROOT)"
 
 sbx-check-policy: check-root
 	@if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
@@ -408,9 +380,6 @@ sbx-check-policy: check-root
 	  exit 1; \
 	fi
 	@"$(CHECK_POLICY)" "$(SANDBOX_NAME)"
-
-sbx-prune: check-root
-	@"$(PRUNE_SCRIPT)" "$(IMAGE_TAG)" "$(PRUNE)" "$(PRUNE_SANDBOXES)"
 
 sbx-ls:
 	@$(SBX) ls

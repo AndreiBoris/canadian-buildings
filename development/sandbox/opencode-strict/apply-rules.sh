@@ -5,14 +5,13 @@
 # Copies config files (located next to this script) plus the locked Python
 # project files into ~/.config/sbx-kits/opencode/ on macOS.
 #
-# This is the legacy manual path; `make sbx` uses the hash-tagged image path.
+# This is the main kit staging path for `make sbx` and `make sbx-new`.
 #
 # Usage: ./apply-rules.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-IMAGE_HASH="${PROJECT_ROOT}/development/sandbox/image-hash.sh"
 TARGET_DIR="${KIT_TARGET_DIR:-${HOME}/.config/sbx-kits/opencode}"
 
 KIT_FILES=(
@@ -53,7 +52,7 @@ for file in "${PROJECT_FILES[@]}"; do
   echo "copied ${file} -> ${TARGET_DIR}/"
 done
 
-sandbox_hash="$("${IMAGE_HASH}" "${PROJECT_ROOT}")"
+sandbox_hash="$("${PROJECT_ROOT}/development/sandbox/image-hash.sh" "${PROJECT_ROOT}")"
 printf '%s\n' "${sandbox_hash}" > "${TARGET_DIR}/sandbox.hash"
 echo "wrote sandbox.hash -> ${TARGET_DIR}/"
 
