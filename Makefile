@@ -18,6 +18,7 @@ APPLY_RULES := $(KIT_DIR)/apply-rules.sh
 BUILD_IMAGE := $(REPO_ROOT)/development/sandbox/build-sandbox-image.sh
 IMAGE_HASH  := $(REPO_ROOT)/development/sandbox/image-hash.sh
 CHECK_POLICY := $(REPO_ROOT)/development/sandbox/check-sbx-policy.sh
+PRUNE_SCRIPT := $(REPO_ROOT)/development/sandbox/prune-sbx.sh
 KIT_SHORTCUT_DIR ?= $(HOME)/.config/sbx-kits/$(KIT_NAME)
 
 # Resolve the directory that contains all worktrees from git's common dir
@@ -42,6 +43,12 @@ UV_VERSION ?= $(shell sed -n 's/^ARG UV_VERSION=//p' "$(KIT_DIR)/opencode.docker
 UV_DIGEST  ?= $(shell sed -n 's/^ARG UV_DIGEST=//p' "$(KIT_DIR)/opencode.dockerfile")
 UV_IMAGE   := ghcr.io/astral-sh/uv:$(UV_VERSION)@sha256:$(UV_DIGEST)
 
+# The scratch uv image is fine for copying /uv into the final image, but
+# `uv lock` needs a Python interpreter. Use the Python-enabled variant for lock.
+UV_LOCK_TAG    ?= $(UV_VERSION)-python3.14-trixie
+UV_LOCK_DIGEST ?= 65557d27bba9d043ce89a7f1ef82bfdaffb1ce45f5e81fce1efd085050673154
+UV_LOCK_IMAGE  := ghcr.io/astral-sh/uv:$(UV_LOCK_TAG)@sha256:$(UV_LOCK_DIGEST)
+
 # Persistent volumes need sbx 0.50+; older versions drop the volume on rm.
 SBX_MIN_VERSION ?= 0.50.0
 SBX_RM_FLAGS    ?=
@@ -57,7 +64,7 @@ VENV_PYTHON      ?= /opt/venv/bin/python
 HOOKS_PATH ?= .githooks
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks hooks-off hooks-test check-root check-docker check-uv-image uv-digest verify verify-raw stale-guard lint format format-raw typecheck test lock sbx-accept sbx-accept-raw sbx sbx-new sbx-image sbx-ensure sbx-kit sbx-apply sbx-settings sbx-check-policy sbx-prune sbx-flush sbx-rm sbx-check-version sbx-where sbx-ls sbx-version
+.PHONY: help hooks hooks-off hooks-test check-root check-docker check-uv-image check-uv-lock-image uv-digest uv-lock-digest verify verify-raw stale-guard lint format format-raw typecheck test lock sbx-accept sbx-accept-raw sbx sbx-new sbx-image sbx-ensure sbx-kit sbx-apply sbx-settings sbx-check-policy sbx-prune sbx-flush sbx-rm sbx-check-version sbx-where sbx-ls sbx-version
 
 help:
 	@printf '%s\n' \
@@ -80,7 +87,8 @@ help:
 	  'Dependency lock:' \
 	  '' \
 	  '  make lock         Run uv lock in a throwaway container (host only)' \
-	  '  make uv-digest    Print the pinned uv image index digest' \
+	  '  make uv-digest    Print the pinned uv build image index digest' \
+	  '  make uv-lock-digest  Print the pinned uv lock image index digest' \
 	  '' \
 	  'Docker Sandboxes (sbx) targets:' \
 	  '' \
@@ -133,8 +141,15 @@ check-uv-image:
 	@printf '%s' "$(UV_VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "error: cannot parse UV_VERSION from $(KIT_DIR)/opencode.dockerfile" >&2; exit 1; }
 	@printf '%s' "$(UV_DIGEST)" | grep -Eq '^[0-9a-f]{64}$$' || { echo "error: UV_DIGEST must be the bare 64-character sha256 digest" >&2; exit 1; }
 
+check-uv-lock-image:
+	@printf '%s' "$(UV_LOCK_TAG)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-python3\.14-trixie$$' || { echo "error: unexpected UV_LOCK_TAG: $(UV_LOCK_TAG)" >&2; exit 1; }
+	@printf '%s' "$(UV_LOCK_DIGEST)" | grep -Eq '^[0-9a-f]{64}$$' || { echo "error: UV_LOCK_DIGEST must be the bare 64-character sha256 digest" >&2; exit 1; }
+
 uv-digest:
 	@docker buildx imagetools inspect "ghcr.io/astral-sh/uv:$(UV_VERSION)" --format '{{json .Manifest.Digest}}' | tr -d '"'
+
+uv-lock-digest:
+	@docker buildx imagetools inspect "ghcr.io/astral-sh/uv:$(UV_LOCK_TAG)" --format '{{json .Manifest.Digest}}' | tr -d '"'
 
 # Quality gate. Inside the sandbox this runs directly; on the host it delegates
 # into the sandbox so the toolchain lives in one place. A stopped sandbox is
@@ -178,10 +193,10 @@ lint:
 	check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/branch-name.yml
 	check-jsonschema --builtin-schema custom.github-workflows-require-timeout .github/workflows/branch-name.yml
 	check-jsonschema --builtin-schema vendor.github-issue-forms .github/ISSUE_TEMPLATE/work-item.yml
-	taplo fmt --check . pyproject.toml
+	taplo fmt --check pyproject.toml
 	actionlint
 	hadolint --failure-threshold warning development/sandbox/opencode-strict/opencode.dockerfile
-	shellcheck $$(git ls-files '*.sh') development/sandbox/*.sh development/sandbox/opencode-strict/*.sh .githooks/pre-commit .githooks/pre-push .githooks/lib/branch-name.sh
+	shellcheck $$(git ls-files '*.sh') .githooks/pre-commit .githooks/pre-push .githooks/lib/branch-name.sh
 	betterleaks dir .
 
 # Mutating formatter. Delegates into the sandbox because ruff and taplo are not
@@ -203,11 +218,15 @@ format:
 
 format-raw:
 	ruff format .
-	taplo fmt . pyproject.toml
+	taplo fmt pyproject.toml
 
 typecheck:
 	@if [ -f pyproject.toml ]; then \
-	  pyrefly check; \
+	  if [ -x "$(VENV_PYTHON)" ]; then \
+	    pyrefly check --python-interpreter-path "$(VENV_PYTHON)"; \
+	  else \
+	    pyrefly check; \
+	  fi; \
 	else \
 	  echo "pyrefly: no pyproject.toml"; \
 	fi
@@ -220,9 +239,9 @@ test:
 	  exit 1; \
 	fi
 
-# Lock resolution never runs on the host. The bare uv image is scratch-based,
-# hence the tmpfs /tmp and HOME override.
-lock: check-docker check-uv-image
+# Lock resolution never runs on the host. The Python-enabled uv image supplies
+# the interpreter that `uv lock` needs; the tmpfs keeps /tmp writable.
+lock: check-docker check-uv-lock-image
 	@test -f pyproject.toml || { echo "error: pyproject.toml is missing" >&2; exit 1; }
 	docker run --rm \
 	  --user "$$(id -u):$$(id -g)" \
@@ -233,9 +252,9 @@ lock: check-docker check-uv-image
 	  -e UV_CACHE_DIR=/tmp/uv-cache \
 	  -v "$(REPO_ROOT)":/workspace \
 	  -w /workspace \
-	  --entrypoint /uv \
-	  "$(UV_IMAGE)" \
-	  lock --no-build
+	  --entrypoint /usr/local/bin/uv \
+	  "$(UV_LOCK_IMAGE)" \
+	  lock --no-build --no-python-downloads
 
 # Baked-toolchain acceptance. Same sandbox-aware delegation as verify.
 sbx-accept:
@@ -379,31 +398,19 @@ sbx-kit: check-root
 	mkdir -p "$$stage"; \
 	cp "$(KIT_DIR)/opencode.yaml" "$(KIT_DIR)/opencode.dockerfile" "$(KIT_DIR)/opencode.json" \
 	  "$(REPO_ROOT)/pyproject.toml" "$(REPO_ROOT)/uv.lock" "$(REPO_ROOT)/.dockerignore" "$$stage/"; \
-	cd "$(WORKTREES_ROOT)" && $(SBX) run --pull never --name "$(SANDBOX_NAME)" "$$stage" opencode "$(WORKTREES_ROOT)"
+	printf '%s\n' "$(SANDBOX_HASH)" > "$$stage/sandbox.hash"; \
+	cd "$(WORKTREES_ROOT)" && SBX_KIT_BUILDER=sandbox \
+	  $(SBX) run --name "$(SANDBOX_NAME)" "$$stage" "$(WORKTREES_ROOT)"
 
 sbx-check-policy: check-root
+	@if ! $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)"; then \
+	  echo "error: sandbox $(SANDBOX_NAME) is not running; run 'make sbx' first" >&2; \
+	  exit 1; \
+	fi
 	@"$(CHECK_POLICY)" "$(SANDBOX_NAME)"
 
 sbx-prune: check-root
-	@echo "current image:   $(IMAGE_TAG)"
-	@echo "current sandbox: $(SANDBOX_NAME)"
-	@echo "--- templates ---"
-	@$(SBX) template ls 2>&1 || true
-	@echo "--- sandboxes ---"
-	@$(SBX) ls 2>&1 || true
-	@if [ "$(PRUNE)" = "1" ]; then \
-	  echo "--- removing stale opencode-sandbox:* templates ---"; \
-	  $(SBX) template ls 2>/dev/null | grep -oE 'opencode-sandbox:[0-9a-f]{12}' | sort -u | grep -vx "$(IMAGE_TAG)" | while read -r tag; do \
-	    echo "removing $$tag"; \
-	    $(SBX) template rm "$$tag"; \
-	  done; \
-	fi
-	@if [ "$(PRUNE_SANDBOXES)" = "1" ]; then \
-	  echo "--- pruning stopped sandboxes ---"; \
-	  $(SBX) prune --force; \
-	else \
-	  echo "stopped sandboxes are reported only; re-run with PRUNE_SANDBOXES=1 to prune"; \
-	fi
+	@"$(PRUNE_SCRIPT)" "$(IMAGE_TAG)" "$(PRUNE)" "$(PRUNE_SANDBOXES)"
 
 sbx-ls:
 	@$(SBX) ls

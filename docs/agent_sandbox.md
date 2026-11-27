@@ -24,7 +24,8 @@ policy produces a new hash and a new sandbox without stopping the old one.
 
 1. Edit `pyproject.toml`.
 2. Run `make lock` on the host. It resolves in a throwaway, unprivileged,
-   digest-pinned `uv` container; lock resolution never runs on the host.
+   digest-pinned Python-enabled `uv` container; lock resolution never runs on
+   the host.
 3. Review the `uv.lock` diff.
 4. Run `make sbx`. The new hash builds and loads a new image, then starts a new
    sandbox.
@@ -33,9 +34,9 @@ policy produces a new hash and a new sandbox without stopping the old one.
 packages published at least seven days ago.
 
 `make lock` is host-only in practice: the sandbox network allow-list blocks
-PyPI and the sandbox does not expose a Docker daemon to the agent. If a host
-does have a Docker daemon but lacks the pinned `uv` image, `make uv-digest`
-prints the expected image digest for review.
+PyPI and the sandbox does not expose a Docker daemon to the agent. `make
+uv-digest` and `make uv-lock-digest` print the expected build and lock image
+digests for review.
 
 ### Changing the sandbox image
 
@@ -51,14 +52,15 @@ manual kit path. The hash-tagged image path does not mutate
 
 | Target | What it runs |
 | --- | --- |
-| `make lock` | `uv lock --no-build` in a throwaway digest-pinned `uv` container (host only) |
-| `make uv-digest` | prints the `ghcr.io/astral-sh/uv` index digest for review |
+| `make lock` | `uv lock --no-build --no-python-downloads` in a throwaway digest-pinned Python-enabled `uv` container (host only) |
+| `make uv-digest` | prints the build-stage `ghcr.io/astral-sh/uv` index digest for review |
+| `make uv-lock-digest` | prints the lock-stage Python-enabled `uv` index digest for review |
 | `make sbx` | ensures `opencode-sandbox:<hash12>` exists, then `sbx run --template … --name opencode-wt-<hash12> opencode "$(WORKTREES_ROOT)"` |
 | `make sbx-new` | `sbx-flush` → `sbx rm` → rebuild/load image → run |
 | `make sbx-image` | builds and loads `opencode-sandbox:<hash12>` from an ephemeral build context |
 | `make sbx-ensure` | builds the image only if the template tag is missing |
-| `make sbx-check-policy` | asserts the sandbox has only the three strict allow-list domains |
-| `make sbx-prune` | reports stale `opencode-sandbox:*` templates and stopped sandboxes |
+| `make sbx-check-policy` | asserts the sandbox has exactly the three strict allow-list domains |
+| `make sbx-prune` | reports templates and sandboxes; `PRUNE=1` removes only templates whose hash sandbox does not exist |
 | `make sbx-kit` | fallback: run from a hash-keyed kit descriptor so `opencode.yaml` capabilities are applied |
 | `make sbx-apply` | legacy: copy kit and locked project files to `~/.config/sbx-kits/opencode` |
 | `make sbx-settings` | legacy: set the `kit.shortcuts.opencode` shortcut |
@@ -105,20 +107,21 @@ make sbx SBX_RUNTIME=kit
 make sbx-new SBX_RUNTIME=kit
 ```
 
-It stages a hash-keyed kit and always passes the absolute
-`$(WORKTREES_ROOT)`.
+It stages a hash-keyed kit, builds it with `SBX_KIT_BUILDER=sandbox`, and
+always passes the absolute `$(WORKTREES_ROOT)`.
 
 ### Pruning
 
 ```bash
-make sbx-prune                 # report templates and sandboxes
-make sbx-prune PRUNE=1         # remove stale opencode-sandbox:* templates
-make sbx-prune PRUNE_SANDBOXES=1  # also prune stopped sandboxes
+make sbx-prune                    # report templates and sandboxes
+make sbx-prune PRUNE=1            # remove templates whose hash sandbox is gone
+make sbx-prune PRUNE_SANDBOXES=1  # list stopped hash sandboxes and removal commands
 ```
 
-Templates referenced by a running sandbox are left alone. Stopped
-`opencode-wt-*` sandboxes are reported separately so a stale sandbox is never
-deleted silently.
+`PRUNE=1` keeps the current tag and every template whose matching
+`opencode-wt-<hash12>` sandbox still exists, including stopped sandboxes.
+`PRUNE_SANDBOXES=1` does not run a global `sbx prune`; it prints the safe
+`make sbx-rm SANDBOX_NAME=...` commands so the WAL flush is preserved.
 
 ### Session persistence
 
@@ -264,7 +267,7 @@ delegates into the sandbox when invoked from the host.
 
 ### Pinning the base image, Dockerfile frontend, and uv
 
-The base image, BuildKit frontend, and uv image are pinned by digest:
+The base image, BuildKit frontend, and uv images are pinned by digest:
 
 ```dockerfile
 # syntax=docker/dockerfile:1@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
@@ -272,19 +275,25 @@ FROM docker/sandbox-templates:opencode@sha256:7feb9784bc882dbe014888becb65c23e7f
 FROM ghcr.io/astral-sh/uv:0.13.10@sha256:a3ea1357342c1a4bf9a0c53a3deb1b55379aefa037338d8113d5771efa01774f
 ```
 
-Re-resolve all three on the host when bumping:
+The lock container uses the Python-enabled variant, also digest-pinned:
+
+```text
+ghcr.io/astral-sh/uv:0.13.10-python3.14-trixie@sha256:65557d27bba9d043ce89a7f1ef82bfdaffb1ce45f5e81fce1efd085050673154
+```
+
+Re-resolve them on the host when bumping:
 
 ```bash
-for ref in docker/dockerfile:1 docker/sandbox-templates:opencode ghcr.io/astral-sh/uv:0.13.10; do
+for ref in docker/dockerfile:1 docker/sandbox-templates:opencode ghcr.io/astral-sh/uv:0.13.10 ghcr.io/astral-sh/uv:0.13.10-python3.14-trixie; do
   digest=$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/ {print $2; exit}')
   printf "%s@%s\n" "$ref" "$digest"
 done
 ```
 
 Use the top-level `Digest:` line (the multi-arch index), not a per-platform
-digest. Update the Dockerfile and this document together, then run `make sbx-new`
-and the acceptance checks. `make uv-digest` prints the currently pinned uv index
-digest for review.
+digest. Update the Dockerfile/Makefile and this document together, then run
+`make sbx-new` and the acceptance checks. `make uv-digest` and `make
+uv-lock-digest` print the currently pinned digests for review.
 
 ## Summary Notes
 

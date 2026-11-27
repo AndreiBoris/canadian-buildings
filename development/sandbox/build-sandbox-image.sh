@@ -34,10 +34,11 @@ for file in "${files[@]}"; do
   cp "${repo_root}/${file}" "${tmp}/$(basename "${file}")"
 done
 
+printf '%s\n' "${full_hash}" > "${tmp}/sandbox.hash"
+
 build_args=(
   --file "${tmp}/opencode.dockerfile"
   --tag "${tag}"
-  --build-arg "SANDBOX_IMAGE_HASH=${full_hash}"
 )
 
 image_tar="${tmp}/image.tar"
@@ -45,12 +46,14 @@ if ! docker buildx build "${build_args[@]}" --output "type=oci,dest=${image_tar}
   echo "warning: OCI exporter unavailable; retrying with --load" >&2
   docker buildx build "${build_args[@]}" --load "${tmp}"
   docker image save --output "${image_tar}" "${tag}"
+  docker rmi "${tag}" >/dev/null 2>&1 || true
 fi
 
 if ! sbx template load "${image_tar}"; then
   echo "warning: sbx could not load the OCI archive; retrying with --load" >&2
   docker buildx build "${build_args[@]}" --load "${tmp}"
   docker image save --output "${image_tar}" "${tag}"
+  docker rmi "${tag}" >/dev/null 2>&1 || true
   sbx template load "${image_tar}"
 fi
 

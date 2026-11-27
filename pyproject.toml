@@ -36,6 +36,3 @@ quote-style = "double"
 project-includes = ["src", "tests"]
 search-path = ["src"]
 python-version = "3.14"
-# The locked venv provides duckdb; this keeps host-side lint usable before the
-# image exists. The build-time smoke test and pytest still import it for real.
-ignore-missing-imports = ["duckdb"]

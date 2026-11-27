@@ -12,6 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+IMAGE_HASH="${PROJECT_ROOT}/development/sandbox/image-hash.sh"
 TARGET_DIR="${KIT_TARGET_DIR:-${HOME}/.config/sbx-kits/opencode}"
 
 KIT_FILES=(
@@ -51,5 +52,9 @@ for file in "${PROJECT_FILES[@]}"; do
   cp -f "${PROJECT_ROOT}/${file}" "${TARGET_DIR}/${file}"
   echo "copied ${file} -> ${TARGET_DIR}/"
 done
+
+sandbox_hash="$("${IMAGE_HASH}" "${PROJECT_ROOT}")"
+printf '%s\n' "${sandbox_hash}" > "${TARGET_DIR}/sandbox.hash"
+echo "wrote sandbox.hash -> ${TARGET_DIR}/"
 
 echo "opencode kit installed at ${TARGET_DIR}"

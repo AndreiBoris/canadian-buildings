@@ -62,7 +62,6 @@ ARG YAMLLINT_VERSION
 ARG CHECK_JSONSCHEMA_VERSION
 ARG RUFF_VERSION
 ARG PYREFLY_VERSION
-ARG SANDBOX_IMAGE_HASH=unknown
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv tool install "yamllint==${YAMLLINT_VERSION}" \
     && uv tool install "check-jsonschema==${CHECK_JSONSCHEMA_VERSION}" \
@@ -80,9 +79,7 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
 COPY --link pyproject.toml uv.lock /opt/project/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --project /opt/project --locked --no-install-project --no-build \
-    && find /opt/venv -type d -exec chmod 755 {} + \
-    && find /opt/venv -type f -exec chmod a+r {} + \
-    && chown -R root:root /opt/venv
+    && chmod -R a+rX,go-w /opt/venv
 
 # 4. Taplo (verified per-arch prebuilt release binary)
 ARG TARGETARCH
@@ -113,9 +110,9 @@ COPY --link --from=yamlfmt     /bin/yamlfmt              /usr/local/bin/yamlfmt
 # Pre-create /etc/opencode as root (0755): traversable by agent,
 # read-only to it, avoids COPY --chmod=644 stripping +x (below)
 RUN install -d -m 755 /etc/opencode \
-    && touch /etc/opencode/sandbox \
-    && printf '%s\n' "${SANDBOX_IMAGE_HASH}" > /etc/opencode/sandbox.hash \
-    && chmod 644 /etc/opencode/sandbox.hash
+    && touch /etc/opencode/sandbox
+
+COPY --chmod=644 sandbox.hash /etc/opencode/sandbox.hash
 
 # 6. Build-time smoke test as the actual runtime user
 USER agent
