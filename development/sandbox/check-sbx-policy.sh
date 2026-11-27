@@ -7,7 +7,7 @@ set -euo pipefail
 
 sandbox="${1:?usage: check-sbx-policy.sh SANDBOX_NAME}"
 
-if ! output="$(sbx policy ls --sandbox "${sandbox}" --wide 2>&1)"; then
+if ! output="$(sbx policy ls "${sandbox}" --wide --type network 2>&1)"; then
   printf '%s\n' "${output}" >&2
   echo "error: cannot read the policy for sandbox ${sandbox}" >&2
   exit 1

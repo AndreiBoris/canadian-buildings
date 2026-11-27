@@ -107,7 +107,7 @@ Run once after the first `make sbx`:
 
 ```bash
 make sbx-check-policy
-sbx policy ls --sandbox "opencode-worktrees" --wide
+sbx policy ls "opencode-worktrees" --wide --type network
 ```
 
 The policy must contain exactly `openrouter.ai:443`, `opencode.ai:443`, and
