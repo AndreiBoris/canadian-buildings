@@ -80,6 +80,8 @@ make sbx-new SBX_RM_FLAGS=--force
 | `make uv-lock-digest` | prints the lock-stage Python-enabled `uv` index digest for review |
 | `make sbx` | re-attaches when the hash stamp and sandbox match; otherwise runs `sbx-new` |
 | `make sbx-new` | `sbx-settings` → `sbx-rm` (WAL flush) → stamp → `SBX_KIT_BUILDER=sandbox sbx run --name opencode-worktrees opencode .` |
+| `make sbx-shell` | ensure the sandbox, then `sbx exec -i [-t] -u agent -w <worktrees root> <sandbox> -- bash -l` |
+| `make sbx-exec` | `make sbx-exec CMD="…"`; ensure the sandbox, then run the command in the worktrees root as `agent` |
 | `make sbx-apply` | copies kit and locked project files into `~/.config/sbx-kits/opencode` |
 | `make sbx-settings` | `sbx settings set kit.shortcuts.opencode "$HOME/.config/sbx-kits/opencode"` |
 | `make sbx-check-policy` | asserts the sandbox has exactly the three strict allow-list domains |
@@ -357,6 +359,49 @@ session history survives the rebuild.
 
 If you need to change the configuration for everyone, edit the kit files in
 `development/sandbox/opencode-strict/`; the hash changes and `make sbx` rebuilds.
+
+## Manual commands (`sbx-shell`, `sbx-exec`)
+
+Run dev commands inside the same sandbox as the agent, without starting the
+agent TUI:
+
+```bash
+make sbx-shell                              # interactive shell
+make sbx-exec CMD="ruff --version"          # one-shot from the worktrees root
+make sbx-exec CMD="cd main && make verify"  # anything needing a worktree
+make sbx-exec CMD='echo "$HOME" && pwd'     # quoting and $VAR pass through
+make sbx-exec CMD="pwd" < /dev/null         # no TTY needed
+```
+
+Both targets ensure the sandbox first: a missing or stale sandbox is rebuilt
+with `sbx-new` using `sbx create`, so no agent session is opened. The new
+sandbox may stay `running` for tens of seconds and then idle-stops; the first
+`sbx exec` starts it on demand. Commands run in the worktrees root as the
+`agent` user (`-u agent`, matching `sbx-flush`) with the same `PATH` as
+`make verify`, and `sbx exec` allocates a TTY only when stdin and stdout are
+terminals.
+
+The worktrees root is not a git repository. `cd` into the worktree you are
+working in — for example `main`, or your own branch's worktree — before running
+`git` or `make`, as in the `cd main` example above.
+
+- **Exit codes:** the in-sandbox status is printed as `sbx-exec: command exited N`
+  and the make target fails. GNU make itself exits `2` for any failed recipe;
+  `125` means sbx could not run the command (for example, no sandbox), and `127`
+  means the command was not found in the sandbox.
+- **Cold-start/rebuild output** goes to stderr, so piping `sbx-exec` stdout is
+  safe. Rebuild stdin is isolated: piped input is never consumed by `sbx rm`'s
+  confirmation prompt.
+- **Rebuild while the agent is attached:** `sbx-ensure` never passes `--force`
+  to `sbx rm`, so a kit change with an active session — or without a terminal
+  available to confirm the prompt — fails closed with a hint. Quit the agent
+  (`make sbx`) first, or run `make sbx-new` yourself.
+- **Concurrent writes:** running commands while the agent is active is
+  supported, but keep one writer per resource. Concurrent `git add`/`commit`
+  races on `.git/index.lock`, SQLite and other single-writer DB files cannot be
+  shared, and two `make verify` runs can contend on tool caches. Lifecycle
+  operations (`sbx-new`, `sbx-rm`) are serialized per sandbox and refuse to
+  remove one with an attached session.
 
 ## Configure
 
