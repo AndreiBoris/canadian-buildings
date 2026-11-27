@@ -33,6 +33,15 @@ SANDBOX_NAME ?= $(if $(WORKTREES_ROOT),$(KIT_NAME)-$(notdir $(WORKTREES_ROOT)),)
 # Persistent volumes need sbx 0.50+; older versions drop the volume on rm.
 SBX_MIN_VERSION ?= 0.50.0
 SBX_RM_FLAGS    ?=
+# Provisioning command for the create/rebuild step in sbx-new. `run` starts the
+# agent; `create` provisions without an agent session and lets the sandbox
+# idle-stop. sbx-ensure passes `create` so manual commands never start the TUI.
+SBX_BUILD_CMD   ?= run
+
+# Raw command for sbx-exec. $(value ...) keeps Make from expanding $VAR or
+# interpreting the text; the export hands the untouched string to the recipe
+# shell, which passes it to `bash -c` verbatim.
+export SBX_CMD := $(value CMD)
 SKIP_FLUSH      ?= 0
 CACHE_DIR       ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)
 KIT_STAMP       := $(CACHE_DIR)/opencode-sbx/$(SANDBOX_NAME).kit.hash
@@ -54,7 +63,7 @@ endef
 HOOKS_PATH ?= .githooks
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks hooks-off hooks-test check-root verify verify-raw lint typecheck test sbx-accept sbx-accept-raw sbx sbx-new sbx-apply sbx-settings sbx-flush sbx-rm sbx-check-version sbx-where sbx-ls sbx-version
+.PHONY: help hooks hooks-off hooks-test check-root verify verify-raw lint typecheck test sbx-accept sbx-accept-raw sbx sbx-new sbx-ensure sbx-shell sbx-exec sbx-exec-check sbx-apply sbx-settings sbx-flush sbx-rm sbx-check-version sbx-where sbx-ls sbx-version
 
 help:
 	@printf '%s\n' \
@@ -77,6 +86,8 @@ help:
 	  '' \
 	  '  make sbx          Run/re-attach; rebuild when kit sources change' \
 	  '  make sbx-new      Apply kit, set shortcut, remove sandbox, rebuild' \
+	  '  make sbx-shell    Open an interactive shell in the worktrees root' \
+	  '  make sbx-exec     One-shot command: make sbx-exec CMD="..."' \
 	  '  make sbx-apply    Copy kit files to ~/.config/sbx-kits/$(KIT_NAME)' \
 	  '  make sbx-settings Set kit.shortcuts.$(KIT_NAME)' \
 	  '  make sbx-flush    Checkpoint the OpenCode WAL and flush the state volume' \
@@ -266,7 +277,7 @@ sbx-new: sbx-check-version sbx-settings sbx-rm
 	[ -n "$$hash" ] || { echo "error: cannot compute kit hash" >&2; exit 1; }; \
 	mkdir -p "$$(dirname "$(KIT_STAMP)")"; \
 	printf '%s\n' "$$hash" > "$(KIT_STAMP)"
-	@cd "$(WORKTREES_ROOT)" && SBX_KIT_BUILDER=sandbox $(SBX) run --name "$(SANDBOX_NAME)" $(KIT_NAME) .
+	@cd "$(WORKTREES_ROOT)" && SBX_KIT_BUILDER=sandbox $(SBX) $(SBX_BUILD_CMD) --name "$(SANDBOX_NAME)" $(KIT_NAME) .
 
 sbx: check-root
 	@[ -d "$(KIT_DIR)" ] || { echo "error: kit dir $(KIT_DIR) is missing" >&2; exit 1; }; \
@@ -279,6 +290,51 @@ sbx: check-root
 	  echo "kit sources changed or sandbox missing; rebuilding $(SANDBOX_NAME)"; \
 	  $(MAKE) --no-print-directory sbx-new; \
 	fi
+
+# Ensure the sandbox exists and matches the kit sources without opening the
+# agent session. Mirrors `sbx`, but a rebuild runs sbx-new with `create`, which
+# provisions without attaching and lets the sandbox idle-stop. Status output
+# goes to stderr so a piped `sbx-exec` keeps stdout clean. The rebuild's stdin
+# is isolated from the caller's (TTY when interactive, /dev/null otherwise), so
+# piped input is never consumed by sbx rm's confirmation prompt. Never forces
+# sbx-rm: a rebuild with an attached session, or without a terminal to confirm
+# the prompt, fails closed with a hint.
+sbx-ensure: check-root sbx-check-version
+	@[ -d "$(KIT_DIR)" ] || { echo "error: kit dir $(KIT_DIR) is missing" >&2; exit 1; }; \
+	hash="$$( $(compute_kit_hash) )"; \
+	[ -n "$$hash" ] || { echo "error: cannot compute kit hash" >&2; exit 1; }; \
+	if $(SBX) ls -q 2>/dev/null | grep -qx "$(SANDBOX_NAME)" \
+	   && [ -f "$(KIT_STAMP)" ] && [ "$$(cat "$(KIT_STAMP)")" = "$$hash" ]; then \
+	  exit 0; \
+	fi; \
+	echo "kit sources changed or sandbox missing; rebuilding $(SANDBOX_NAME) without the agent" >&2; \
+	if [ -t 0 ]; then exec 3<&0; else exec 3</dev/null; fi; \
+	if ! $(MAKE) --no-print-directory sbx-new SBX_BUILD_CMD=create >&2 <&3 3<&-; then \
+	  echo "hint: rebuild failed. Quit any attached agent session and run" >&2; \
+	  echo "      from an interactive terminal, or run make sbx-new yourself." >&2; \
+	  exit 1; \
+	fi
+
+# Manual commands run as the image's `agent` user, explicitly (`-u agent`,
+# matching sbx-flush), so caches, $HOME, and new files never end up root-owned.
+# `-i` keeps stdin open (pipes, here-docs); `-t` is added only on a real TTY.
+# GNU make reports a failed recipe as exit 2; the in-sandbox status is printed.
+sbx-shell: sbx-ensure
+	@tty=""; if [ -t 0 ] && [ -t 1 ]; then tty="-t"; fi; \
+	exec $(SBX) exec -i $$tty -u agent -w "$(WORKTREES_ROOT)" "$(SANDBOX_NAME)" -- bash -l
+
+sbx-exec-check:
+	@test -n "$$SBX_CMD" || { \
+	  echo 'error: CMD is required, e.g. make sbx-exec CMD="pwd"' >&2; exit 2; \
+	}
+
+sbx-exec: sbx-exec-check sbx-ensure
+	@tty=""; if [ -t 0 ] && [ -t 1 ]; then tty="-t"; fi; \
+	status=0; \
+	$(SBX) exec -i $$tty -u agent -w "$(WORKTREES_ROOT)" "$(SANDBOX_NAME)" -- \
+	  bash -c "$$SBX_CMD" || status=$$?; \
+	if [ $$status -ne 0 ]; then echo "sbx-exec: command exited $$status" >&2; fi; \
+	exit $$status
 
 sbx-ls:
 	@$(SBX) ls
